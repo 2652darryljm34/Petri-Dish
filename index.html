@@ -135,6 +135,7 @@ main>section{min-width:0;min-height:0;display:flex;flex-direction:column;backgro
 #gutter i{display:block;font-style:normal;padding-right:9px}
 #hl{overflow:hidden;pointer-events:none;z-index:2;color:var(--ink)}
 #hl .ln{display:block;min-height:var(--lh)}
+.edin{will-change:transform}
 #hl .ln.cur{background:rgba(79,227,193,.11);box-shadow:inset 2px 0 0 var(--cyan)}
 #hl .ln.err{background:rgba(255,107,94,.13);box-shadow:inset 2px 0 0 var(--warn)}
 #code{
@@ -176,6 +177,8 @@ main>section{min-width:0;min-height:0;display:flex;flex-direction:column;backgro
   color:var(--faint);display:block;margin-bottom:1px;
 }
 .rc .v{font-family:var(--mono);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;display:block}
+.rc .pk{font-family:var(--mono);font-size:9px;color:#4a6b64;display:block;
+  font-variant-numeric:tabular-nums;min-height:11px;letter-spacing:.02em}
 .rc .rt{font-family:var(--mono);font-size:9.5px;color:var(--faint);display:block;
   font-variant-numeric:tabular-nums;margin-top:1px;min-height:12px}
 .rc.locked{opacity:.3}
@@ -227,6 +230,11 @@ main>section{min-width:0;min-height:0;display:flex;flex-direction:column;backgro
   padding:8px 10px;margin-bottom:6px}
 .tcard.live{border-color:var(--amber);background:#17150e}
 .tcard.done{border-color:#2f6b5d}
+.labsvg{display:block;margin:2px 0 4px;overflow:visible}
+#labcard{position:sticky;bottom:-10px;background:var(--panel);padding-top:6px;
+  margin-top:10px;border-top:1px solid var(--line)}
+.labnode rect{transition:stroke .12s,fill .12s}
+.labnode:hover rect{stroke:#d8e6e1}
 .tcard .nm{font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:.02em;display:block}
 .tcard .ds{font-size:11.5px;color:var(--dim);display:block;margin:2px 0 6px;line-height:1.4}
 .tcard .cost{font-family:var(--mono);font-size:11px;display:flex;gap:9px;flex-wrap:wrap;
@@ -311,6 +319,7 @@ main>section{min-width:0;min-height:0;display:flex;flex-direction:column;backgro
       <div class="ph">
         Program
         <span class="spacer"></span>
+        <span id="notrace" hidden style="font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--faint);text-transform:none">too fast to trace</span>
         <button class="tiny" id="bApply" hidden>apply changes</button>
         <label class="chk" style="font-size:10px" title="re-apply the program automatically a moment after you stop typing"><input type="checkbox" id="live" checked> live</label>
         <button class="tiny" id="bBoard">reset dish</button>
@@ -340,7 +349,7 @@ main>section{min-width:0;min-height:0;display:flex;flex-direction:column;backgro
     <section id="pane-lab">
       <div class="subtabs">
         <button data-s="lab" aria-selected="true">Lab</button>
-        <button data-s="trials" aria-selected="false">Trials</button>
+        <button data-s="trials" aria-selected="false">Tasks</button>
         <button data-s="prof" aria-selected="false">Profile</button>
         <button data-s="api" aria-selected="false">Docs</button>
       </div>
@@ -1019,6 +1028,35 @@ class Parser{
 
 /* ---------- values ---------- */
 class Tup extends Array{}
+/* Python hashes by value: (1,2) is the same key as another (1,2). A JS Map
+   hashes objects by identity, so tuple keys silently never matched. This keeps
+   a canonical string per key and stores the original key beside the value. */
+class PyDict{
+  constructor(src){
+    this.m=new Map();
+    const self=this;
+    if(src) src.forEach(function(v,k){ self.set(k,v); });
+  }
+  static ck(k){
+    if(k===null) return 'N';
+    if(k===true) return 'T';
+    if(k===false) return 'F';
+    const t=typeof k;
+    if(t==='number') return '#'+k;
+    if(t==='string') return '$'+k;
+    if(Array.isArray(k)) return '('+Array.prototype.map.call(k,PyDict.ck).join(',')+')';
+    return '@'+String(k);
+  }
+  get size(){ return this.m.size; }
+  has(k){ return this.m.has(PyDict.ck(k)); }
+  get(k){ const e=this.m.get(PyDict.ck(k)); return e?e[1]:undefined; }
+  set(k,v){ this.m.set(PyDict.ck(k),[k,v]); return this; }
+  delete(k){ return this.m.delete(PyDict.ck(k)); }
+  clear(){ this.m.clear(); }
+  forEach(fn,thisArg){ this.m.forEach(function(e){ fn.call(thisArg,e[1],e[0]); }); }
+  keys(){ const o=[]; this.m.forEach(function(e){ o.push(e[0]); }); return o; }
+  values(){ const o=[]; this.m.forEach(function(e){ o.push(e[1]); }); return o; }
+}
 /* dict.keys()/values()/items() are views in Python: iterable, printed as
    dict_keys([...]), and not subscriptable */
 class View extends Array{}
@@ -1035,7 +1073,7 @@ function typeName(v){
   if(v instanceof View) return v.__view;
   if(isTuple(v)) return 'tuple';
   if(Array.isArray(v)) return 'list';
-  if(v instanceof Map) return 'dict';
+  if(v instanceof PyDict) return 'dict';
   if(v&&(v.__fn||v.__pure||v.__act||v.__gen||v.__bound)) return 'function';
   return 'object';
 }
@@ -1045,7 +1083,7 @@ function truthy(v){
   if(typeof v==='number') return v!==0;
   if(typeof v==='string') return v.length>0;
   if(Array.isArray(v)) return v.length>0;
-  if(v instanceof Map) return v.size>0;
+  if(v instanceof PyDict) return v.size>0;
   return true;
 }
 function numStr(n){
@@ -1064,7 +1102,7 @@ function fmt(v){
   if(v instanceof View) return v.__view+'(['+items(v)+'])';
   if(isTuple(v)) return v.length===1?'('+rep(v[0])+',)':'('+items(v)+')';
   if(Array.isArray(v)) return '['+items(v)+']';
-  if(v instanceof Map){ const o=[]; v.forEach((val,k)=>o.push(rep(k)+': '+rep(val))); return '{'+o.join(', ')+'}'; }
+  if(v instanceof PyDict){ const o=[]; v.forEach((val,k)=>o.push(rep(k)+': '+rep(val))); return '{'+o.join(', ')+'}'; }
   if(v&&v.__fn) return '<function '+(v.__fn.name||'<lambda>')+'>';
   if(v&&(v.__pure||v.__act||v.__gen)) return '<built-in function>';
   if(v&&v.__bound) return '<built-in method '+v.__bound.name+'>';
@@ -1087,7 +1125,7 @@ function pyEq(a,b){
     for(let i=0;i<a.length;i++) if(!pyEq(a[i],b[i])) return false;
     return true;
   }
-  if(a instanceof Map&&b instanceof Map){
+  if(a instanceof PyDict&&b instanceof PyDict){
     if(a.size!==b.size) return false;
     let ok=true;
     a.forEach((v,k)=>{ if(!ok) return; if(!b.has(k)||!pyEq(v,b.get(k))) ok=false; });
@@ -1109,7 +1147,7 @@ function pyCmp(a,b,line){
 function iterate(v,line){
   if(Array.isArray(v)) return Array.from(v);   // plain array, never a Tup/View
   if(typeof v==='string') return v.split('');
-  if(v instanceof Map) return Array.from(v.keys());
+  if(v instanceof PyDict) return Array.from(v.keys());
   throw new LangError("TypeError: '"+typeName(v)+"' object is not iterable",line);
 }
 function normIndex(i,len,line,what){
@@ -1204,15 +1242,82 @@ class Env{
    WORLD
    ============================================================ */
 const SPECIES={
-  CULTURE :{nm:'CULTURE', col:'#4fe3c1', sterile:false, grow:4,  growVar:[3,12], cost:null, res:'bacteria', base:4, peak:90,  fade:90,  life:450},
-  SPORE   :{nm:'SPORE',   col:'#b98cff', sterile:true,  grow:8,  cost:{bacteria:8},    res:'spores', base:8, peak:110, fade:110, life:550},
+  /* No `life` on these two on purpose. A hard death is the same death spiral the
+     freshness floor exists to prevent, one timescale up: the harvest returns
+     nothing, an empty grab costs two steps instead of one, the lap gets longer,
+     and more cells pass their deadline. On an 11x11 the planting lap alone
+     outran CULTURE's 450 and the farm could never start - three dish upgrades
+     sold as improvements produced exactly zero. Abandoned ground is punished by
+     contamination now, which spreads, shows itself and can be cured; rot does
+     not need to do that job as well. STRAND keeps its life because there the
+     short fuse IS the puzzle. */
+  CULTURE :{nm:'CULTURE', col:'#4fe3c1', sterile:false, grow:4,  growVar:[3,12], cost:null, res:'bacteria', base:4, peak:90,  fade:90},
+  SPORE   :{nm:'SPORE',   col:'#b98cff', sterile:true,  grow:8,  cost:{bacteria:8},    res:'spores', base:8, peak:110, fade:110},
   MYCELIUM:{nm:'MYCELIUM',col:'#ffb54d', sterile:false, grow:14, cost:{spores:5},      res:'enzymes'},
   BIOFILM :{nm:'BIOFILM', col:'#ff5f8d', sterile:true,  grow:18, cost:{enzymes:4},     res:'biomass'},
+  STRAND  :{nm:'STRAND',  col:'#8ef58a', sterile:true,  grow:12, growVar:[4,40],
+             cost:{biomass:20}, res:'crystals', peak:25, fade:25, life:50},
   CRYSTAL :{nm:'CRYSTAL', col:'#7fd7ff', sterile:true,  grow:12, cost:{biomass:5},     res:'crystals'}
 };
+/* How many crops a single sterilize() is good for. Sterile agar used to be
+   permanent, so one pass over the dish retired sterilize() for the rest of the
+   run and substrate() with it. Now growing something in a treated cell dirties
+   it, and the treatment has to be repeated - which is what makes substrate()
+   worth a step and fast optics worth buying. */
+const STERILE_CROPS=5;
+/* Contamination.
+
+   Ground you stop attending to goes bad, and bad ground infects what is beside
+   it. This is the one mechanic that makes a dish you cannot keep up with an
+   actively worse dish, rather than just a slower one - without it the best play
+   on a big board is to work one corner and let the rest sit.
+
+   Deterministic throughout, on purpose: a cell fouls a fixed number of steps
+   after the bot last stood on it, and a fouled cell takes its neighbours a fixed
+   number of steps later. That makes it a scheduling problem you solve by
+   writing a patrol, not a dice roll you absorb. */
+const FOUL_PER_CELL=12;   // the neglect window, in steps per cell of the dish
+const FOUL_SPREAD=260;    // steps a fouled cell waits before taking a neighbour
+const FOUL_CHECK=20;      // how often the dish is examined; keeps the scan cheap
+/* Scaled by area, not fixed. A worst-case lap is about four steps a cell, so
+   this is roughly three laps of slack at every dish size. A flat window was
+   fine at 7x7 and fatal at 15x15, where one circuit of a 225-cell dish already
+   runs to ~900 steps: the far side fouled while the bot was still working, seeds
+   then failed on fouled ground, the lap got longer, and the whole dish died.
+   The rule is meant to be "keep up with your own dish", and that has to mean the
+   same thing on every dish. */
+function foulNeglect(){ return W.size*W.size*FOUL_PER_CELL; }
+/* the largest biofilm patch that still harvests as one coherent colony */
+const BIO_COHERE=16;
 const RES_ORDER=['bacteria','spores','enzymes','biomass','crystals'];
+/* bronze / silver / gold sustained rates. Set against measured reference
+   programs (balance.js): bronze is a working farm, silver is a good one, and
+   gold is above anything in stages/ - it has to be written, not bought. */
+const RATE_TIERS={
+  bacteria:[0.6,1.2,2.0],
+  spores:  [0.6,1.2,2.2],
+  enzymes: [0.2,0.45,0.8],
+  biomass: [0.5,1.5,3.2],
+  crystals:[0.08,0.2,0.4]
+};
 const RES_COL={bacteria:'#4fe3c1',spores:'#b98cff',enzymes:'#ffb54d',biomass:'#ff5f8d',crystals:'#7fd7ff'};
 const RES_SPECIES={bacteria:null,spores:'SPORE',enzymes:'MYCELIUM',biomass:'BIOFILM',crystals:'CRYSTAL'};
+/* who makes each resource. RES_SPECIES leaves bacteria null because nothing is
+   upstream of it in the tech tree; here it needs a producer, because a stage
+   starts you with an empty ledger and bacteria is where you have to begin. */
+const RES_FROM={bacteria:'CULTURE',spores:'SPORE',enzymes:'MYCELIUM',biomass:'BIOFILM',crystals:'CRYSTAL'};
+/* every species you must be able to plant to reach sp from nothing, in order */
+function supplyChain(sp){
+  const out=[], seen=new Set();
+  (function walk(s){
+    if(!s||seen.has(s)) return;
+    seen.add(s);
+    const d=SPECIES[s];
+    if(d.cost) for(const r in d.cost) walk(RES_FROM[r]);
+    out.push(s);
+  })(sp);
+  return out;
+}
 
 const TECH=[
  {id:'loop',   g:'Language',  nm:'Iteration',        ds:'Unlocks while loops for better decision control.', cost:{bacteria:32},  feat:'loop'},
@@ -1221,31 +1326,34 @@ const TECH=[
  {id:'forloop',g:'Language',  nm:'Ranges',           ds:'Unlocks for x in range(n) — counted loops instead of hand-rolled ones.', cost:{spores:720}, feat:'forloop'},
  {id:'func',   g:'Language',  nm:'Functions',        ds:'Unlocks def. Name a routine once, call it from anywhere.',             cost:{spores:2200},  feat:'func'},
  {id:'lists',  g:'Language',  nm:'Lists',            ds:'Unlocks [ ], indexing, len(), .append() and .pop().',                  cost:{enzymes:750},  feat:'lists'},
- {id:'slicing',g:'Language',  nm:'Slicing',           ds:'Unlocks a[i:j], a[:n], a[::-1] and step slices.',                      cost:{enzymes:1100}, feat:'slicing'},
+ {id:'slicing',g:'Language',  nm:'Slicing',           ds:'Unlocks a[i:j], a[:n], a[::-1] and step slices. Keep the dish as one flat list and a slice hands you a whole row of it — which is how you read a STRAND row without walking it.',                      cost:{enzymes:1100}, feat:'slicing'},
  {id:'comp',   g:'Language',  nm:'Comprehensions',    ds:'Unlocks [ f(x) for x in xs if c ] and the dict form.',                 cost:{enzymes:2100}, feat:'comprehensions'},
- {id:'dicts',  g:'Language',  nm:'Dictionaries',     ds:'Unlocks { } key/value maps, .keys(), .values(), .get().',              cost:{biomass:7500}, feat:'dicts'},
+ {id:'dicts',  g:'Language',  nm:'Dictionaries',     ds:'Unlocks { } key/value maps, .keys(), .values(), .get().',              cost:{biomass:2600}, feat:'dicts'},
  {id:'errors', g:'Language',  nm:'Error handling',      ds:'Unlocks try / except / finally and raise, so one bad step no longer kills a program that has been running for hours.', cost:{enzymes:1500}, feat:'errors'},
- {id:'higher', g:'Language',  nm:'Higher-order functions', ds:'Unlocks lambda, so you can hand a function to sorted(key=...), map() and filter().', cost:{biomass:12000}, feat:'higher'},
+ {id:'higher', g:'Language',  nm:'Higher-order functions', ds:'Unlocks lambda, so you can hand a function to sorted(key=...), map() and filter().', cost:{biomass:4100}, feat:'higher'},
 
- {id:'sterile',g:'Cultures',  nm:'Sterile technique',ds:'Unlocks sterilize() and the SPORE species, which only grows on sterile agar.', cost:{bacteria:640}, species:'SPORE'},
+ {id:'sterile',g:'Cultures',  nm:'Sterile technique',ds:'Unlocks sterilize() and the SPORE species, which only grows on sterile agar. It also starts the clock on contamination: from here on, ground nobody has stood on for a while goes bad and spreads into what is beside it, and sterilize() is the only cure.', cost:{bacteria:640}, species:'SPORE'},
  {id:'myc',    g:'Cultures',  nm:'Mycelial networks',ds:'Unlocks MYCELIUM. Every mature mycelium touching it at harvest adds to the payout — plant in patches.', cost:{spores:1280}, species:'MYCELIUM'},
- {id:'bio',    g:'Cultures',  nm:'Biofilm colonies', ds:'Unlocks BIOFILM. A connected patch harvests as one unit and pays the square of its size — but every cell must be mature at once.', cost:{enzymes:1250}, species:'BIOFILM'},
- {id:'cryst',  g:'Cultures',  nm:'Crystal lattice',  ds:'Unlocks CRYSTAL, plus measure() and swap(). Harvest the highest facet count on the dish first for the full payout.', cost:{biomass:9500}, species:'CRYSTAL', feat:'measure'},
+ {id:'bio',    g:'Cultures',  nm:'Biofilm colonies', ds:'Unlocks BIOFILM. A connected patch harvests as one unit and pays the square of its size — but every cell must be mature at once, and a colony past sixteen cells loses cohesion at the centre, so only sixteen ever pay. Lay out several patches with a gap between them rather than one big one.', cost:{enzymes:1250}, species:'BIOFILM'},
+ {id:'cryst',  g:'Cultures',  nm:'Crystal lattice',  ds:'Unlocks CRYSTAL, plus measure() and swap(). Harvest the highest facet count on the dish first for the full payout.', cost:{biomass:3300}, species:'CRYSTAL', feat:'measure'},
+ {id:'strand', g:'Cultures',  nm:'Strand cultures',  ds:'Unlocks STRAND, which grows in chains along a row. Harvesting one takes the whole unbroken run of ripe strand beside it and pays the SQUARE of that run\u2019s length in crystals. Every cell comes up at its own pace, so the run you can take changes from step to step \u2014 slice the row out of your own records and work out when it is longest.', cost:{biomass:4800}, species:'STRAND'},
  {id:'maze',   g:'Cultures',  nm:'Labyrinth assay',  ds:'Unlocks maze() and blocked(). Floods the dish into a labyrinth with a payload buried at its furthest point — reach it and harvest for crystals equal to the cell count. Your culture is put back exactly as you left it.', cost:{crystals:60}, feat:'maze'},
 
  {id:'sp1', g:'Apparatus', nm:'Actuator tuning I',  ds:'Raises the top execution speed to 64 steps per second.', cost:{bacteria:480}, speed:1},
  {id:'grip',    g:'Apparatus', nm:'Precision grip',    ds:'A harvest that comes up empty costs one step instead of two.',        cost:{spores:1400}, feat:'grip'},
  {id:'preserve',g:'Apparatus', nm:'Preservative agar', ds:'Ripe cells hold their full value half again as long before they begin to fade.', cost:{enzymes:900}, feat:'preserve'},
  {id:'optics',  g:'Apparatus', nm:'Fast optics',       ds:'scan(), mature(), substrate(), measure() and blocked() stop costing a step — looking becomes free and only doing costs time. Use wait() when you need the clock to move.', cost:{enzymes:2600}, feat:'fastsense'},
- {id:'replant', g:'Apparatus', nm:'Seeder attachment', ds:'A successful harvest replants the same species in the same step, if you can pay the seed cost.', cost:{biomass:9000}, feat:'replant'},
+ {id:'replant', g:'Apparatus', nm:'Seeder attachment', ds:'Unlocks replant(): take the crop and put the same species straight back, for the price of one action instead of two. Only where you call it, and only the same species — turning a bed over to a different crop still costs a harvest() and a seed().', cost:{biomass:3100}, feat:'replant'},
  {id:'sp2', g:'Apparatus', nm:'Actuator tuning II', ds:'256 steps per second.',                                 cost:{spores:1800},  speed:1},
  {id:'d7',  g:'Apparatus', nm:'7 × 7 dish',       ds:'49 cells. A bigger dish does little for lone cultures — the bot is the bottleneck, not the agar — but the patch species scale with area.', cost:{spores:2800}, size:7},
  {id:'sp3', g:'Apparatus', nm:'Actuator tuning III',ds:'1200 steps per second.',                                cost:{enzymes:1600}, speed:1},
- {id:'d9',  g:'Apparatus', nm:'9 × 9 dish',       ds:'81 cells. A biofilm patch pays the square of its size, so every cell you add compounds.', cost:{enzymes:1900}, size:9},
- {id:'d11', g:'Apparatus', nm:'11 × 11 dish',      ds:'121 cells.',                                            cost:{biomass:17000},size:11},
- {id:'d13', g:'Apparatus', nm:'13 × 13 dish',      ds:'169 cells.',                                            cost:{biomass:55000},size:13},
+ {id:'d9',  g:'Apparatus', nm:'9 × 9 dish',       ds:'81 cells. A colony tops out at sixteen, so the room goes into laying out more colonies side by side — four of them fit here with a bare row and column between.', cost:{enzymes:1900}, size:9},
+ {id:'d11', g:'Apparatus', nm:'11 × 11 dish',      ds:'121 cells.',                                            cost:{biomass:5800},size:11},
+ {id:'d13', g:'Apparatus', nm:'13 × 13 dish',      ds:'169 cells.',                                            cost:{biomass:19000},size:13},
  {id:'sp4', g:'Apparatus', nm:'Actuator tuning IV', ds:'3000 steps per second. Full throttle.',                 cost:{crystals:600}, speed:1},
- {id:'d15', g:'Apparatus', nm:'15 × 15 dish',      ds:'225 cells, and the largest the rig will hold.',         cost:{crystals:1200},size:15}
+ {id:'twin', g:'Apparatus', nm:'Second actuator',  ds:'A second nanobot on the dish. Both run YOUR program, each with its own variables and its own position \u2014 bot_id() tells a bot which one it is. Both act in the same step. They take up room, though: two bots cannot share a cell, and a round runs them in order, so the lower bot_id() takes any cell they both reach for. Measured on a 7×7 culture bed, a second bot running the same snake is worth 3.8×; split by bot_id() onto its own rows it is worth 5×.', cost:{crystals:3000}, twin:true},
+ {id:'d15', g:'Apparatus', nm:'15 \u00d7 15 dish',      ds:'225 cells, and the largest the rig will hold.',         cost:{crystals:1200},size:15},
+ {id:'jump', g:'Apparatus', nm:'Field displacer',   ds:'Unlocks jump(x, y): put the bot on any cell of the dish for a flat 4 steps, however far it is. Walking costs one step a cell, so the only question is which is shorter \u2014 and the dish wraps, so the way round is often nearer than it looks. Worthless on a small dish, decisive on a large one.', cost:{crystals:900}, feat:'jump'}
 ];
 
 let RNG=Math.random;
@@ -1260,36 +1368,164 @@ function mulberry32(a){
 /* Trials: a fixed dish, a fixed seed and a fixed step budget, so a score means
    something and can be beaten. Resources earned inside a trial are scored and
    then discarded - your real culture is untouched. */
+/* Each stage proves you understand one mechanic before the tech tree will sell
+   you the next. A streak stage is a correctness test, not an endurance one: a
+   correct program clears it without trying, a wrong one fails within a few.
+
+   No stage hands out resources. You arrive with an empty dish and an empty
+   ledger, so everything you spend you first have to grow, which means running
+   the whole chain below the new species at the same time as the new species
+   itself. An earlier version staked two million spores; at that price the
+   mycelium stage cleared itself the moment you snaked across the dish, because
+   a cell you can always afford to plant is a cell you never think about. */
+const STAGES=[
+ {id:'s_culture', nm:'First culture', size:5, opens:['sterile'], par:400,
+  ds:'An empty dish and an empty ledger. Bank 400 bacteria. This is the loop everything else is built on — take what is ready, plant, move along.',
+  kind:'bank', res:'bacteria', target:400,
+  setup(){}},
+ {id:'s_sterile', nm:'Clean plate', size:5, opens:['myc'], par:1400,
+  ds:'Spores only grow on sterile agar, and asking which cells are sterile costs a step. Bank 600 spores — and nothing is provided, so the bacteria that pay for them have to come off the same dish. Two crops, one bot, twenty-five cells.',
+  kind:'bank', res:'spores', target:600,
+  setup(){}},
+ {id:'s_myc', nm:'Two live links', size:7, opens:['bio'], species:'MYCELIUM', par:4800,
+  ds:'Mycelium pays for its ripe neighbours. Take 200 IN A ROW that each had at least two ripe mycelium beside them — take one without, and the streak returns to zero. Nothing is provided, so every spore you plant is bacteria you grew, and a scattered network burns five spores to pay one enzyme.',
+  kind:'streak', need:2, target:200,
+  setup(){}},
+ {id:'s_bio', nm:'Nine at once', size:7, opens:['cryst'], species:'BIOFILM', par:29000,
+  ds:'A biofilm pays the square of its patch, but every cell has to be ripe at the same moment. Bring in 20 patches of nine cells or more. Nothing is provided — forty-nine cells now have to carry four crops at once, and dividing them up is the whole problem.',
+  kind:'count', need:9, target:20,
+  setup(){ for(const c of W.grid){ c.g='sterile'; c.sc=STERILE_CROPS; } }},
+ {id:'s_cryst', nm:'Highest facet first', size:7, opens:['strand','maze'], species:'CRYSTAL', feats:['measure'], par:8600,
+  ds:'Only the highest facet count still standing pays in full. Take 60 IN A ROW at full value — one wrong pick resets the streak. Nothing is provided, and crystal sits four tiers downstream: the beds that feed it have to keep running while you pick.',
+  kind:'streak', need:1, target:60,
+  setup(){ for(const c of W.grid){ c.g='sterile'; c.sc=STERILE_CROPS; } }},
+ {id:'s_strand', nm:'Five in a row', size:9, opens:['twin'], species:'STRAND', par:36000,
+  ds:'Strand pays the square of an unbroken run along its row. Bring in 6 runs of five or more. At 20 biomass a cell it is the most expensive thing on the dish and nothing is provided, so a run you mistime is a run you paid for and threw away.',
+  kind:'count', need:5, target:6,
+  setup(){ for(const c of W.grid){ c.g='sterile'; c.sc=STERILE_CROPS; } }}
+];
+const STAGE_GATE={};
+for(const st of STAGES) for(const t of st.opens) STAGE_GATE[t]=st.id;
+function stageFor(techId){ return STAGES.find(function(s){ return s.id===STAGE_GATE[techId]; }); }
+function stageDone(id){ return !!(W.done&&W.done[id]); }
+/* the first stage you have not cleared - everything after it is still shut */
+function stageOpen(id){
+  for(const st of STAGES){
+    if(st.id===id) return true;
+    if(!stageDone(st.id)) return false;
+  }
+  return false;
+}
+const TIERS=[['bronze',1],['silver',1.6],['gold',2.4]];
 const CHALLENGES=[
  {id:'first', nm:'First Harvest', size:5, steps:300, goal:'bacteria', par:300,
   ds:'An empty dish and three hundred steps. Bank as many bacteria as you can.',
-  setup(){}},
+  setup(varied){
+    if(!varied) return;
+    /* a scatter of crops already part-grown: which ones are worth the walk is
+       the whole opening, and it is different every seed */
+    for(const c of W.grid){
+      if(RNG()>0.35) continue;
+      c.s='CULTURE'; c.gt=rollGrow('CULTURE'); c.t=W.tick-Math.floor(RNG()*c.gt*1.4);
+    }
+  }},
  {id:'web', nm:'Mycelial Web', size:7, steps:150, goal:'enzymes', par:150,
   ds:'A dish already full of ripe mycelium. Every cell you take removes a neighbour from the ones still standing, so the order you harvest in is the whole puzzle.',
-  setup(){ for(const c of W.grid){ c.s='MYCELIUM'; c.gt=SPECIES.MYCELIUM.grow; c.t=W.tick-c.gt; } }},
+  setup(varied){
+    for(const c of W.grid){ c.s='MYCELIUM'; c.gt=SPECIES.MYCELIUM.grow; c.t=W.tick-c.gt; }
+    /* holes turn one connectivity puzzle into a new one each seed, and a broken
+       web is the more interesting board of the two */
+    if(varied) for(const c of W.grid) if(RNG()<0.22) c.s=null;
+  }},
  {id:'bloom', nm:'Biofilm Bloom', size:7, steps:500, goal:'biomass', par:2000,
   ds:'Sterile agar and 400 enzymes. A connected patch pays the square of its size, but every cell has to be ripe at the same moment.',
-  setup(){ for(const c of W.grid) c.g='sterile'; W.res.enzymes=400; }},
+  setup(varied){
+    for(const c of W.grid){ c.g='sterile'; c.sc=STERILE_CROPS; }
+    /* patches of raw agar you have to plan around, or spend steps treating */
+    if(varied) for(const c of W.grid) if(RNG()<0.25){ c.g='agar'; c.sc=0; }
+    W.res.enzymes=400;
+  }},
  {id:'sort', nm:'Crystal Sort', size:7, steps:500, goal:'crystals', par:400,
   ds:'A dish of ripe crystals with fixed facet counts. Only the highest still standing pays in full; everything else pays one.',
-  setup(){ for(const c of W.grid){ c.g='sterile'; c.s='CRYSTAL'; c.gt=SPECIES.CRYSTAL.grow; c.t=W.tick-c.gt; c.f=1+Math.floor(RNG()*(W.size*W.size)); } }},
+  setup(){ for(const c of W.grid){ c.g='sterile'; c.sc=STERILE_CROPS; c.s='CRYSTAL'; c.gt=SPECIES.CRYSTAL.grow; c.t=W.tick-c.gt; c.f=1+Math.floor(RNG()*(W.size*W.size)); } }},
  {id:'sprint', nm:'Labyrinth Sprint', size:9, steps:800, goal:'crystals', par:243, maze:true,
   ds:'Solve as many labyrinths as you can before the budget runs out. Each payload pays the cell count, and a fresh maze appears the moment you claim one.',
   setup(){ W.maze=true; genMaze(); W.x=0; W.y=0; W.px=0; W.py=0; }}
 ];
+/* Labels short enough for a 124px node, and the prerequisites the schematic
+   draws. Every one of these was already implied by which resource the node
+   costs, so making them explicit changes no existing save. */
+const TECH_SHORT={
+  sterile:'Sterile tech', myc:'Mycelium', bio:'Biofilm', higher:'Higher-order', strand:'Strand',
+  preserve:'Preservative', replant:'Seeder', grip:'Precision grip',
+  sp1:'Actuator I', sp2:'Actuator II', sp3:'Actuator III', sp4:'Actuator IV',
+  twin:'Second bot'
+};
+const TECH_REQ={
+  slicing:['lists'], comp:['lists'], dicts:['lists'], higher:['func'], errors:['cond'],
+  myc:['sterile'], bio:['myc'], cryst:['bio'], strand:['cryst','slicing'], maze:['cryst'],
+  sp2:['sp1'], sp3:['sp2'], sp4:['sp3'],
+  d9:['d7'], d11:['d9'], d13:['d11'], d15:['d13'], twin:['maze'], jump:['d9']
+};
+const GROUP_COL={Language:'#b98cff', Cultures:'#4fe3c1', Apparatus:'#ffb54d'};
+function shortName(t){ return TECH_SHORT[t.id]||t.nm; }
+function reqMet(t){
+  const r=TECH_REQ[t.id];
+  if(r&&!r.every(function(id){ return W.owned.has(id); })) return false;
+  /* anything already bought is grandfathered; only new purchases are gated */
+  const sg=STAGE_GATE[t.id];
+  if(sg&&!W.owned.has(t.id)&&!stageDone(sg)) return false;
+  return true;
+}
+function reqMissing(t){
+  const r=TECH_REQ[t.id]||[];
+  const out=r.filter(function(id){ return !W.owned.has(id); })
+             .map(function(id){ const n=TECH.find(function(x){return x.id===id;}); return n?n.nm:id; });
+  const sg=STAGE_GATE[t.id];
+  if(sg&&!W.owned.has(t.id)&&!stageDone(sg)){
+    const st=STAGES.find(function(x){ return x.id===sg; });
+    out.push('the ' + (st?st.nm:sg) + ' stage');
+  }
+  return out;
+}
 const W={
-  size:5, grid:[], x:0, y:0, tick:0,
+  size:5, grid:[], tick:0,
   res:{bacteria:0,spores:0,enzymes:0,biomass:0,crystals:0},
   owned:new Set(), feats:new Set(), species:new Set(['CULTURE']),
   speedTier:0, lastAct:'—',
-  px:0, py:0,           // interpolated draw position
+  bots:[{x:0,y:0,px:0,py:0}], bot:0,     // every bot has its own position
+  hist:[],                               // coarse resource history, for the charts
+  intro:{},                              // the four first steps, ticked off as they happen
+  pops:[],                               // floating payout numbers
+  fx:[],                                 // harvest bursts, one shape per species
   maze:false, saved:null, tx:-1, ty:-1,  // labyrinth assay state
   wasted:0, lastOk:true, flash:null,     // feedback for actions that did nothing
-  trial:null, best:{},                   // trial in progress, and best score per trial
-  prof:{}, profFail:{}, slots:[], slot:0 // step accounting, and saved programs
+  trial:null, best:{}, stage:null, done:{}, // trials, and curriculum progress
+  prof:{}, profFail:{}, slots:[], slot:0, // step accounting, and saved programs
+  stats:{}                               // lifetime record, survives a dish reset
 };
 
-function newCell(){ return {g:'agar',s:null,t:0,f:0,w:false,gt:0}; }
+/* W.x / W.y still mean "where the bot is" - they just resolve to whichever bot
+   is currently executing, so every existing call site and test keeps working. */
+['x','y','px','py'].forEach(function(k){
+  Object.defineProperty(W,k,{
+    get:function(){ return W.bots[W.bot][k]; },
+    set:function(v){ W.bots[W.bot][k]=v; },
+    enumerable:false, configurable:true
+  });
+});
+function setBotCount(n){
+  while(W.bots.length<n) W.bots.push({x:0,y:0,px:0,py:0});
+  if(W.bots.length>n) W.bots.length=n;
+  if(W.bot>=W.bots.length) W.bot=0;
+}
+function homeBots(){
+  W.bots.forEach(function(b,i){
+    b.x=Math.min(i,W.size-1); b.y=0; b.px=b.x; b.py=0;
+  });
+  W.bot=0;
+}
+function newCell(){ return {g:'agar',s:null,t:0,f:0,w:false,gt:0,sc:0,seen:0,ft:0}; }
 function initGrid(n){
   W.size=n; W.grid=[];
   for(let i=0;i<n*n;i++) W.grid.push(newCell());
@@ -1301,6 +1537,7 @@ function resizeGrid(n){
     g.push(x<os&&y<os?old[y*os+x]:newCell());
   }
   W.size=n; W.grid=g;
+  for(const c of g) if(!c.seen) c.seen=W.tick;
   W.x=Math.min(W.x,n-1); W.y=Math.min(W.y,n-1);
   W.px=W.x; W.py=W.y;
 }
@@ -1339,6 +1576,72 @@ function isRotted(c){
   return !!d.life && ripeAge(c)>=d.life;
 }
 function occupied(c){ return c.s!==null && !isRotted(c); }
+function foul(c,why){
+  if(c.g==='fouled'||c.w) return false;
+  /* nothing goes bad under a bot that is standing on it - spread reaching into
+     the cell you are working right now reads as the game cheating */
+  for(const b of W.bots) if(cell(b.x,b.y)===c) return false;
+  c.g='fouled'; c.ft=W.tick; c.s=null; c.t=0; c.f=0; c.gt=0; c.sc=0;
+  if(why) hintOnce('foul-'+why, why);
+  return true;
+}
+/* Brings fouling up to date with the clock. Written as a catch-up rather than a
+   per-tick callback so that missing a call only defers the work: any caller can
+   ask for the current state and get it. */
+let lastFoulScan=0;
+function foulCatchUp(){
+  /* Nothing goes bad before you can do anything about it. sterilize() is the only
+     cure and it arrives with Sterile technique; without this gate, a player who
+     worked one row of the opening 5x5 watched the other twenty cells foul, spread
+     and take the dish, with no way to clean any of it. A mechanic whose answer you
+     do not own yet is not difficulty, it is a dead end. */
+  if(!W.feats.has('sterile')) return;
+  if(W.maze||W.trial) return;               // not a farm; nothing to neglect
+  /* the second half catches the clock jumping backwards, which it does when a
+     stage or trial hands the real dish back */
+  if(W.tick>=lastFoulScan&&W.tick-lastFoulScan<FOUL_CHECK) return;
+  lastFoulScan=W.tick;
+  const n=W.size, grid=W.grid, limit=foulNeglect();
+  /* a bot is tending the ground it stands on whether or not it acted this tick */
+  for(const b of W.bots){ const c=cell(b.x,b.y); if(c) c.seen=W.tick; }
+  /* neglect first, then spread, so a cell cannot foul and infect in one pass */
+  for(let i=0;i<grid.length;i++){
+    const c=grid[i];
+    if(c.g==='fouled'||c.w) continue;
+    if(W.tick-(c.seen||0)>=limit)
+      foul(c,'Ground nobody has stood on for '+limit+' steps goes bad on its own, and bad '+
+        'ground takes the cells beside it '+FOUL_SPREAD+' steps later. sterilize() is the only thing '+
+        'that clears it. Keep a patrol going, or keep the dish small enough to finish a lap.');
+  }
+  const taking=[];
+  for(let i=0;i<grid.length;i++){
+    const c=grid[i];
+    if(c.g!=='fouled'||c.w) continue;
+    if(W.tick-(c.ft||0)<FOUL_SPREAD) continue;
+    c.ft=W.tick;                            // spreads again on the same clock
+    const x=i%n, y=(i-x)/n;
+    for(const q of neighbours(x,y)) taking.push(cell(q[0],q[1]));
+  }
+  for(const c of taking)
+    if(foul(c,null)&&c.s!==null)
+      hintOnce('foul-spread','Contamination has spread into a planted cell and destroyed what was in it. '+
+        'It keeps spreading every '+FOUL_SPREAD+' steps until somebody sterilizes it.');
+}
+function resetFoulClock(){
+  lastFoulScan=W.tick;
+  for(const c of W.grid){ c.seen=W.tick; if(c.g==='fouled'){ c.g='agar'; c.ft=0; } }
+}
+/* growing a crop in treated agar uses the treatment up */
+function gained(r,n){
+  if(W.trial||W.stage) return;              // scratch dishes are not your history
+  W.stats.got=W.stats.got||{};
+  W.stats.got[r]=(W.stats.got[r]||0)+n;
+}
+function spendSterility(c){
+  if(c.g!=='sterile') return;
+  c.sc=(c.sc||0)-1;
+  if(c.sc<=0){ c.g='agar'; c.sc=0; }
+}
 function isMature(c){ return occupied(c) && (W.tick-c.t)>=growTime(c); }
 function growth(c){ return c.s===null?0:Math.min(1,(W.tick-c.t)/growTime(c)); }
 function wrap(v){ return ((v%W.size)+W.size)%W.size; }
@@ -1352,16 +1655,47 @@ function neighbours(x,y){
 const STEP={step:true}, TICK={tick:true};
 const RT={
   gen:null, running:false, paused:false, line:0, depth:0, errLine:0,
-  sinceTick:0, acc:0, ticksFrame:0, out:0, samples:[], srcRunning:''
+  sinceTick:0, acc:0, ticksFrame:0, out:0, samples:[], srcRunning:'',
+  popBuf:[], fxBuf:[],                   // this frame's payouts, merged before they are drawn
+  bestAtStart:{}, toldBest:{},           // the records this run is trying to beat
+  gens:[], globals:[], roundI:0, err:null
 };
 
 /* a short rolling window of resource totals, so the tiles can show a rate */
 const RATE_EVERY=20, RATE_KEEP=50;
+/* One point every HIST_EVERY steps, capped at HIST_KEEP points — about 48,000
+   steps of shape at a size the save can carry. */
+const HIST_EVERY=200, HIST_KEEP=240;
 function sampleRate(){
   RT.samples.push({t:W.tick,res:Object.assign({},W.res)});
   while(RT.samples.length>RATE_KEEP) RT.samples.shift();
+  if(RT.samples.length>=RATE_KEEP&&!W.trial&&!W.stage){
+    W.stats.peak=W.stats.peak||{};
+    for(const r of RES_ORDER){
+      const v=rateFor(r);
+      if(v<=(W.stats.peak[r]||0)) continue;
+      /* Announce against the record as it stood when this run began, once per
+         resource. Against the live peak it would fire on every sample while the
+         rate climbed, and the news is "this program beats your last one". */
+      if(v>(RT.bestAtStart[r]||0)&&!RT.toldBest[r]&&(RT.bestAtStart[r]||0)>0){
+        RT.toldBest[r]=1;
+        logLine('New best: '+v.toFixed(3)+' '+r+'/step, up from '+
+          (RT.bestAtStart[r]).toFixed(3)+'.','good');
+      }
+      W.stats.peak[r]=Math.round(v*1000)/1000;
+    }
+  }
 }
 function clearRates(){ RT.samples=[]; W.prof={}; W.profFail={}; }
+function logHistory(){
+  if(W.trial||W.stage) return;
+  if(W.tick%HIST_EVERY!==0) return;
+  W.hist=W.hist||[];
+  const last=W.hist[W.hist.length-1];
+  if(last&&last[0]===W.tick) return;
+  W.hist.push([W.tick,W.res.bacteria,W.res.spores,W.res.enzymes,W.res.biomass,W.res.crystals]);
+  while(W.hist.length>HIST_KEEP) W.hist.shift();
+}
 function rateFor(r){
   if(RT.samples.length<2) return 0;
   const a=RT.samples[0], b=RT.samples[RT.samples.length-1];
@@ -1369,15 +1703,26 @@ function rateFor(r){
   if(dt<=0) return 0;
   return (W.res[r]-a.res[r])/dt;
 }
+/* A red cross tells you WHERE something failed. This tells you why - once per
+   distinct reason per run, so a loop cannot flood the log. */
+let hinted={};
+function at(){ return ' at '+W.x+','+W.y; }
+function hintOnce(key,msg){
+  if(hinted[key]) return;
+  hinted[key]=1;
+  logLine(msg,'sys');
+}
 function advance(label,ok){
-  W.tick++; RT.sinceTick=0;
+  RT.sinceTick=0;
+  here().seen=W.tick;          // standing on a cell is what counts as tending it
+  W.stats.acts=(W.stats.acts||0)+1;
+  if(label==='move') W.stats.walked=(W.stats.walked||0)+1;
   W.lastAct=label; W.lastOk=ok!==false;
   W.prof[label]=(W.prof[label]||0)+1;
-  if(ok===false) W.profFail[label]=(W.profFail[label]||0)+1;
-  if(W.tick%20===0) sampleRate();
   if(ok===false){
     W.wasted++;
-    W.flash={x:W.x,y:W.y,t:performance.now()};   // real time, so it is visible at any speed
+    W.profFail[label]=(W.profFail[label]||0)+1;
+    W.flash={x:W.x,y:W.y,t:performance.now()};   // real time, so it shows at any speed
   }
 }
 
@@ -1385,23 +1730,92 @@ function advance(label,ok){
 const DX=[0,1,0,-1], DY=[-1,0,1,0];
 /* Outside the labyrinth the dish wraps at its edges. Inside it does not,
    and walls block movement, so move() can fail. */
+/* Two bots used to stand in the same cell quite happily, which meant a second
+   actuator was just the same lap run twice with an offset. They take up room
+   now, so dividing the dish between them is a problem you have to solve.
+   A round resolves bots in order, so the lower bot_id() wins a contested cell -
+   arbitrary, but fixed, which is what lets you code around it. */
+function botAt(x,y){
+  for(let i=0;i<W.bots.length;i++){
+    if(i===W.bot) continue;
+    if(W.bots[i].x===x&&W.bots[i].y===y) return true;
+  }
+  return false;
+}
 function stepTarget(dir){
   if(W.maze){
     const nx=W.x+DX[dir], ny=W.y+DY[dir];
     if(nx<0||ny<0||nx>=W.size||ny>=W.size) return null;
     if(cell(nx,ny).w) return null;
+    if(botAt(nx,ny)) return null;
     return [nx,ny];
   }
-  return [wrap(W.x+DX[dir]),wrap(W.y+DY[dir])];
+  const tx=wrap(W.x+DX[dir]), ty=wrap(W.y+DY[dir]);
+  if(botAt(tx,ty)) return null;
+  return [tx,ty];
 }
 function* aMove(dir){
   if(typeof dir!=='number'||dir<0||dir>3)
     throw new LangError('move() needs a direction: NORTH, EAST, SOUTH or WEST',RT.line);
   const t=stepTarget(dir);
   if(t){ W.x=t[0]; W.y=t[1]; }
+  else if(W.bots.length>1&&botAt(wrap(W.x+DX[dir]),wrap(W.y+DY[dir])))
+    hintOnce('move-bot','move() was blocked'+at()+': the other bot is standing in that cell. Two bots '+
+      'cannot share one. A round runs them in order, so bot 0 takes a contested cell and bot 1 is '+
+      'turned back — use bot_id() to give them different ground, or different work.');
   advance('move',t!==null);
   yield TICK;
   return t!==null;
+}
+/* Flat cost, whatever the distance. Priced by the distance is just goto(), which
+   the player can already write in four lines, and one step flat would delete
+   route planning altogether - a third of every program's steps are movement.
+   Flat means there is a break-even distance, and finding it is the problem.
+   It is also a tech that turns itself on as the dish grows: the longest walk on
+   an n-wide torus is 2*floor(n/2), so this is worthless at 5x5, a toss-up at
+   7x7 and decisive at 15x15. */
+const JUMP_COST=4;
+/* the shorter way round a torus, which is what you have to beat */
+function torusWalk(x,y){
+  const n=W.size;
+  const dx=Math.abs(x-W.x), dy=Math.abs(y-W.y);
+  return Math.min(dx,n-dx)+Math.min(dy,n-dy);
+}
+function* aJump(x,y){
+  if(!W.feats.has('jump'))
+    throw new LangError('jump() is locked — unlock Field displacer in the Lab',RT.line);
+  if(typeof x!=='number'||typeof y!=='number'||!Number.isInteger(x)||!Number.isInteger(y))
+    throw new LangError('jump() needs two whole numbers: jump(x, y)',RT.line);
+  if(x<0||y<0||x>=W.size||y>=W.size)
+    throw new LangError('jump('+x+', '+y+') is off the dish — it is '+W.size+'×'+W.size+
+      ', so both need to be 0 to '+(W.size-1),RT.line);
+  if(W.maze){
+    hintOnce('jump-maze','jump() does nothing in the labyrinth — the walls are the puzzle. '+
+      'Feel your way with blocked().');
+    for(let i=0;i<JUMP_COST;i++){ advance('jump',false); yield TICK; }
+    return false;
+  }
+  if(botAt(x,y)){
+    hintOnce('jump-bot','jump('+x+', '+y+') was refused: the other bot is standing there. '+
+      'A jump costs '+JUMP_COST+' steps whether it lands or not, so it is worth knowing where the other one is.');
+    for(let i=0;i<JUMP_COST;i++){ advance('jump',false); yield TICK; }
+    return false;
+  }
+  if(x===W.x&&y===W.y){
+    hintOnce('jump-here','jump('+x+', '+y+') went nowhere — that is where the bot already is, '+
+      'and it still cost '+JUMP_COST+' steps.');
+    for(let i=0;i<JUMP_COST;i++){ advance('jump',false); yield TICK; }
+    return false;
+  }
+  const walk=torusWalk(x,y);
+  if(walk<JUMP_COST)
+    hintOnce('jump-short','jump('+x+', '+y+') cost '+JUMP_COST+' steps to cover ground you could have '+
+      'walked in '+walk+'. The dish wraps, so the way round is often shorter than it looks — the real '+
+      'distance is min(dx, n-dx) + min(dy, n-dy).');
+  jumpFx(W.x,W.y,x,y);
+  W.x=x; W.y=y;
+  for(let i=0;i<JUMP_COST;i++){ advance('jump',true); yield TICK; }
+  return true;
 }
 function* aBlocked(dir){
   if(!W.feats.has('maze')) throw new LangError('blocked() is locked — unlock Labyrinth assay in the Lab',RT.line);
@@ -1434,7 +1848,7 @@ function restoreFarm(){
    every dish size in the tree is odd */
 function genMaze(){
   const n=W.size, key=(x,y)=>y*n+x;
-  for(const c of W.grid){ c.w=true; c.s=null; c.t=0; c.f=0; c.g='sterile'; }
+  for(const c of W.grid){ c.w=true; c.s=null; c.t=0; c.f=0; c.g='sterile'; c.sc=STERILE_CROPS; }
   const seen=new Set([0]);
   cell(0,0).w=false;
   const stack=[[0,0]];
@@ -1474,81 +1888,197 @@ function genMaze(){
   W.tx=far[0]; W.ty=far[1];
 }
 function* aWait(){ advance('wait',true); yield TICK; return true; }
+/* harvest and re-seed the same crop for the price of one action. Same species
+   only: converting a bed to a different one is a real decision and still costs
+   the full harvest() + seed(). */
+function* aReplant(){
+  if(!W.feats.has('replant'))
+    throw new LangError('replant() is locked — unlock Seeder attachment in the Lab',RT.line);
+  return yield* aHarvest(true);
+}
 function* aSterilize(){
-  const c=here(); c.g='sterile'; c.s=null; c.t=0; c.f=0;
-  advance('sterilize'); yield TICK; return true;
+  if(W.maze){
+    hintOnce('ster-maze','sterilize() does nothing in the labyrinth. Claim the payload and your culture comes back.');
+    advance('sterilize',false); yield TICK; return false;
+  }
+  const c=here();
+  /* Topping up a partly spent cell is real work; only treating one that is
+     already at full strength changes nothing, and that is exactly as wasteful
+     as grabbing at an empty cell, so it is reported the same way. */
+  const changed=c.g!=='sterile'||(c.sc||0)<STERILE_CROPS;   // fouled counts as changed
+  if(!changed)
+    hintOnce('ster-full','sterilize()'+at()+' changed nothing — that cell is already at full '+
+      'strength. Treatment lasts '+STERILE_CROPS+' crops and only wears down when something '+
+      'is harvested there, so substrate() will tell you when it has run out.');
+  /* Treating a cell wipes whatever is in it. That barely mattered when you only
+     ever called this on bare agar; now that treatment expires you will be calling
+     it inside a bed that is already running, so it has to say what it killed. */
+  if(c.s!==null&&!isRotted(c))
+    hintOnce('ster-kill','sterilize()'+at()+' destroyed the '+c.s+' growing there. Treating a cell '+
+      'wipes it, so check substrate() before reaching for it in a bed that is already planted.');
+  const wasFouled=c.g==='fouled';
+  c.g='sterile'; c.sc=STERILE_CROPS; c.s=null; c.t=0; c.f=0; c.gt=0; c.ft=0;
+  if(wasFouled) logLine('Contamination cleared at '+W.x+','+W.y+'.','good');
+  advance('sterilize',changed);
+  yield TICK;
+  return changed;
 }
 function* aSeed(sp){
   if(typeof sp!=='string'||!SPECIES[sp])
     throw new LangError('seed() needs a species, such as CULTURE',RT.line);
   if(!W.species.has(sp))
     throw new LangError(sp+' is not unlocked yet — see the Lab panel',RT.line);
+  if(W.maze){
+    hintOnce('seed-maze','seed() does nothing in the labyrinth \u2014 you are navigating, not farming. '+
+      'Claim the payload and your culture comes back exactly as you left it.');
+    advance('seed',false); yield TICK; return false;
+  }
   const c=here(), def=SPECIES[sp];
   let ok=true;
-  if(occupied(c)) ok=false;
-  if(def.sterile&&c.g!=='sterile') ok=false;
+  if(occupied(c)){
+    ok=false;
+    hintOnce('seed-busy-'+sp,'seed('+sp+') failed'+at()+': a '+c.s+' is growing there'+
+      (isMature(c)?' and is ready to harvest':' and is not ripe yet')+
+      '. Harvest it, or sterilize() to clear it.');
+  }
+  if(ok&&c.g==='fouled'){
+    ok=false;
+    hintOnce('seed-fouled','seed('+sp+') failed'+at()+': that ground is FOULED and nothing will take in it. '+
+      'sterilize() is the only thing that clears contamination — and the longer it sits, the more of '+
+      'the dish it takes.');
+  }
+  if(ok&&def.sterile&&c.g!=='sterile'){
+    ok=false;
+    hintOnce('seed-agar-'+sp,'seed('+sp+') failed'+at()+': '+sp+' only grows on sterile agar and that '+
+      'cell reads AGAR. A sterilize() is good for '+STERILE_CROPS+' crops and then the ground goes '+
+      'back to agar, so treated cells have to be treated again. substrate() tells you which is which.');
+  }
   if(ok&&def.cost){
-    for(const k in def.cost) if(W.res[k]<def.cost[k]) ok=false;
+    const short=[];
+    for(const k in def.cost) if(W.res[k]<def.cost[k]) short.push(def.cost[k]+' '+k+' (you have '+W.res[k]+')');
+    if(short.length){
+      ok=false;
+      hintOnce('seed-cost-'+sp,'seed('+sp+') failed'+at()+': it costs '+short.join(' and ')+'.');
+    }
     if(ok) for(const k in def.cost) W.res[k]-=def.cost[k];
   }
   if(ok){
+    introMark('planted');
     c.s=sp; c.t=W.tick; c.gt=rollGrow(sp);
     c.f= sp==='CRYSTAL' ? 1+Math.floor(RNG()*(W.size*W.size)) : 0;
   }
   advance('seed',ok); yield TICK; return ok;
 }
-function* aHarvest(){
+function* aHarvest(reseed){
   if(W.maze){
     let prize=0;
     if(W.x===W.tx&&W.y===W.ty){
       prize=W.size*W.size;
-      W.res.crystals+=prize;
+      W.res.crystals+=prize; gained('crystals',prize);
+      burst('PAYLOAD',W.x,W.y,RES_COL.crystals,null);
+      pop(W.x,W.y,null,RES_COL.crystals,prize);
+      W.stats.mazes=(W.stats.mazes||0)+1;
       if(W.trial&&W.trial.def.maze){ genMaze(); W.x=0; W.y=0; }   // next labyrinth
       else restoreFarm();     // the culture comes back exactly as it was left
     }
+    if(prize<=0)
+      hintOnce('harv-maze','harvest() in the labyrinth only claims the payload \u2014 the cell marked on the dish.');
     advance('harvest',prize>0); yield TICK;
     if(prize<=0&&!W.feats.has('grip')){ advance('harvest',false); yield TICK; }
     return prize>0;
   }
   const c=here();
-  let got=0, took=null;
+  let got=0, took=null, qual=0, tookCells=null;
   if(c.s!==null&&isMature(c)){
     const sp=c.s; took=sp;
+    W.stats.harvests=(W.stats.harvests||0)+1;
     if(sp==='CULTURE'||sp==='SPORE'){
       got=yieldFor(c);
-      W.res[SPECIES[sp].res]+=got;
-      c.s=null;
+      qual=got;
+      W.res[SPECIES[sp].res]+=got; gained(SPECIES[sp].res,got);
+      c.s=null; spendSterility(c);
     }
     else if(sp==='MYCELIUM'){
       let adj=0;
       for(const p of neighbours(W.x,W.y)){ const n=cell(p[0],p[1]); if(n.s==='MYCELIUM'&&isMature(n)) adj++; }
-      got=1+adj; W.res.enzymes+=got; c.s=null;
+      got=1+adj; qual=adj; W.res.enzymes+=got; gained('enzymes',got); c.s=null; spendSterility(c);
     }
     else if(sp==='BIOFILM'){
       const patch=floodBiofilm(W.x,W.y);
       if(patch.every(p=>isMature(cell(p[0],p[1])))){
-        const n=patch.length; got=n*n; W.res.biomass+=got;
-        for(const p of patch){ const cc=cell(p[0],p[1]); cc.s=null; cc.t=0; }
+        const n=patch.length;
+        /* The square is capped at BIO_COHERE cells. Uncapped, a patch that
+           filled the dish paid its AREA squared - 2401 biomass on a 7x7, 50625
+           on a 15x15 - so biomass arrived faster the bigger your dish got and
+           one harvest bought a whole tier. Capped, the gradient from one cell
+           to sixteen is still 256x, but a bigger dish buys you more patches
+           rather than one better one, which is the same way every other
+           species scales. */
+        const paid=Math.min(n,BIO_COHERE);
+        got=paid*paid; qual=n; W.res.biomass+=got; gained('biomass',got);
+        tookCells=patch.slice();
+        for(const p of patch){ const cc=cell(p[0],p[1]); cc.s=null; cc.t=0; spendSterility(cc); }
       }
+    }
+    else if(sp==='STRAND'){
+      /* the maximal unbroken run of ripe strand in this row, wrapping */
+      const n=W.size, y=W.y;
+      const live=[];
+      for(let x=0;x<n;x++){ const cc=cell(x,y); live.push(cc.s==='STRAND'&&isMature(cc)); }
+      let lo=W.x, count=1;
+      while(count<n&&live[((lo-1)%n+n)%n]){ lo=((lo-1)%n+n)%n; count++; }
+      let hi=W.x;
+      while(count<n&&live[(hi+1)%n]){ hi=(hi+1)%n; count++; }
+      got=count*count;
+      qual=count;
+      W.res.crystals+=got; gained('crystals',got);
+      tookCells=[];
+      for(let i=0,x=lo;i<count;i++,x=(x+1)%n){ tookCells.push([x,y]); const cc=cell(x,y); cc.s=null; cc.t=0; cc.gt=0; spendSterility(cc); }
     }
     else if(sp==='CRYSTAL'){
       let best=0;
       for(let i=0;i<W.grid.length;i++){ const cc=W.grid[i]; if(cc.s==='CRYSTAL'&&isMature(cc)&&cc.f>best) best=cc.f; }
       got= c.f>=best ? c.f : 1;
-      W.res.crystals+=got; c.s=null; c.f=0;
+      qual= c.f>=best ? 1 : 0;
+      W.res.crystals+=got; gained('crystals',got); c.s=null; c.f=0; spendSterility(c);
     }
   }
-  if(got>0&&W.feats.has('replant')&&c.s===null){
-    const sp=SPECIES[took], def=sp;
-    let can=(!def.sterile||c.g==='sterile');
-    if(can&&def.cost) for(const k in def.cost) if(W.res[k]<def.cost[k]) can=false;
-    if(can){
+  if(reseed&&got>0&&c.s===null){
+    const def=SPECIES[took];
+    const short=[];
+    if(def.sterile&&c.g!=='sterile') short.push('the agar went back to AGAR');
+    if(def.cost) for(const k in def.cost) if(W.res[k]<def.cost[k]) short.push('it needs '+def.cost[k]+' '+k);
+    if(short.length)
+      hintOnce('replant-short','replant() took the '+took+' but could not put one back'+at()+': '+
+        short.join(' and ')+'. It harvests either way, so this cost you nothing beyond the empty cell.');
+    else {
       if(def.cost) for(const k in def.cost) W.res[k]-=def.cost[k];
       c.s=took; c.t=W.tick; c.gt=rollGrow(took);
       c.f= took==='CRYSTAL' ? 1+Math.floor(RNG()*(W.size*W.size)) : 0;
     }
   }
   /* a grab that comes up empty costs double, so looking first can pay */
+  if(got<=0){
+    if(c.s===null)
+      hintOnce('harv-empty','harvest() came up empty'+at()+': nothing is growing there. '+
+        'An empty grab costs two steps, so it is worth knowing where you have planted.');
+    else if(isRotted(c))
+      hintOnce('harv-rot','harvest() came up empty'+at()+': what was there has rotted away. '+
+        'Species that spoil have to be taken before their time runs out.');
+    else if(!isMature(c))
+      hintOnce('harv-young','harvest() came up empty'+at()+': the '+c.s+' there is not ripe yet. '+
+        'mature() will tell you, and steps() tells you the clock.');
+    else if(c.s==='BIOFILM')
+      hintOnce('harv-bio','harvest() came up empty'+at()+': a BIOFILM patch pays nothing unless EVERY cell '+
+        'connected to it is ripe at the same moment.');
+  }
+  if(got>0&&took){
+    introMark('harvested');
+    const col=RES_COL[SPECIES[took].res];
+    burst(took,W.x,W.y,col,tookCells);
+    pop(W.x,W.y,null,col,got);
+  }
+  if(took) stageHarvest(took,qual);
   advance('harvest',got>0); yield TICK;
   if(got<=0&&!W.feats.has('grip')){ advance('harvest',false); yield TICK; }
   return got>0;
@@ -1579,8 +2109,9 @@ function* aMature(){
 }
 function* aSubstrate(){
   const c=here();
-  if(FREE_SENSE()) return c.g==='sterile'?'STERILE':'AGAR';
-  advance('substrate'); yield TICK; return c.g==='sterile'?'STERILE':'AGAR';
+  const read=function(){ return c.g==='fouled'?'FOULED':(c.g==='sterile'?'STERILE':'AGAR'); };
+  if(FREE_SENSE()) return read();
+  advance('substrate'); yield TICK; return read();
 }
 function* aMeasure(){
   if(!W.feats.has('measure')) throw new LangError('measure() is locked — unlock Crystal lattice in the Lab',RT.line);
@@ -1617,7 +2148,7 @@ function bRange(args,line){
 }
 function pyLen(v,line){
   if(typeof v==='string'||Array.isArray(v)) return v.length;
-  if(v instanceof Map) return v.size;
+  if(v instanceof PyDict) return v.size;
   throw new LangError("TypeError: object of type '"+typeName(v)+"' has no len()",line);
 }
 
@@ -1627,7 +2158,7 @@ function buildGlobals(){
   const g=new Env(null);
   g.set('NORTH',0); g.set('EAST',1); g.set('SOUTH',2); g.set('WEST',3);
   for(const k in SPECIES) g.set(k,k);
-  g.set('AGAR','AGAR'); g.set('STERILE','STERILE');
+  g.set('AGAR','AGAR'); g.set('STERILE','STERILE'); g.set('FOULED','FOULED');
   for(const r of RES_ORDER) g.set(r.toUpperCase(),r);
 
   const act=(fn,arity)=>({__act:fn,arity});
@@ -1635,6 +2166,8 @@ function buildGlobals(){
   g.set('harvest',act(aHarvest,0));
   g.set('seed',act(aSeed,1));
   g.set('sterilize',act(aSterilize,0));
+  g.set('replant',act(aReplant,0));
+  g.set('jump',act(aJump,2));
   g.set('wait',act(aWait,0));
   g.set('scan',act(aScan,0));
   g.set('mature',act(aMature,0));
@@ -1657,7 +2190,10 @@ function buildGlobals(){
   g.set('pos_x',pure(()=>W.x));
   g.set('pos_y',pure(()=>W.y));
   g.set('dish_size',pure(()=>W.size));
+  g.set('steps',pure(()=>W.tick));
   g.set('in_maze',pure(()=>W.maze));
+  g.set('bot_id',pure(()=>W.bot));
+  g.set('bots',pure(()=>W.bots.length));
   g.set('num',pure(r=>{
     if(typeof r!=='string'||!(r in W.res))
       throw new LangError('ValueError: num() needs a resource such as BACTERIA',RT.line);
@@ -1694,9 +2230,9 @@ function buildGlobals(){
   g.set('list',pure(v=>v===undefined?[]:iterate(v,RT.line)));
   g.set('tuple',pure(v=>mkTuple(v===undefined?[]:iterate(v,RT.line))));
   g.set('dict',pure(v=>{
-    if(v===undefined) return new Map();
-    if(v instanceof Map) return new Map(v);
-    const m=new Map();
+    if(v===undefined) return new PyDict();
+    if(v instanceof PyDict) return new PyDict(v);
+    const m=new PyDict();
     for(const p of iterate(v,RT.line)) m.set(p[0],p[1]);
     return m;
   }));
@@ -1927,7 +2463,7 @@ function* assignTo(t,v,env){
 function setIndex(obj,idx,v,line){
   if(isTuple(obj)) throw new LangError("TypeError: 'tuple' object does not support item assignment",line);
   if(Array.isArray(obj)){ obj[normIndex(idx,obj.length,line,'list')]=v; return; }
-  if(obj instanceof Map){ obj.set(idx,v); return; }
+  if(obj instanceof PyDict){ obj.set(idx,v); return; }
   throw new LangError("TypeError: '"+typeName(obj)+"' object does not support item assignment",line);
 }
 function getIndex(obj,idx,line){
@@ -1935,7 +2471,7 @@ function getIndex(obj,idx,line){
     throw new LangError("TypeError: '"+obj.__view+"' object is not subscriptable",line);
   if(Array.isArray(obj)) return obj[normIndex(idx,obj.length,line,isTuple(obj)?'tuple':'list')];
   if(typeof obj==='string') return obj[normIndex(idx,obj.length,line,'string')];
-  if(obj instanceof Map){
+  if(obj instanceof PyDict){
     if(!obj.has(idx)) throw new LangError('KeyError: '+rep(idx),line);
     return obj.get(idx);
   }
@@ -1999,7 +2535,7 @@ function* evalExpr(n,env){
       return out;
     }
     case 'dictlit': {
-      const m=new Map();
+      const m=new PyDict();
       for(const p of n.pairs){
         const k=yield* evalExpr(p[0],env);
         m.set(k,yield* evalExpr(p[1],env));
@@ -2102,7 +2638,7 @@ function compareOne(op,a,b,line){
 }
 function containsVal(container,v,line){
   if(Array.isArray(container)) return container.some(x=>pyEq(x,v));
-  if(container instanceof Map){
+  if(container instanceof PyDict){
     let found=false;
     container.forEach((_,k)=>{ if(pyEq(k,v)) found=true; });
     return found;
@@ -2115,7 +2651,7 @@ function containsVal(container,v,line){
 }
 
 function* evalComp(n,env){
-  const out=n.kind==='dict'?new Map():[];
+  const out=n.kind==='dict'?new PyDict():[];
   // Python 3 comprehensions have their own scope; the loop name must not leak
   yield* compLoop(n,new Env(env),0,out);
   return out;
@@ -2244,7 +2780,7 @@ function* callMethod(o,name,args,kw,line){
     }
     throw new LangError("AttributeError: 'list' object has no attribute '"+name+"'",line);
   }
-  if(o instanceof Map){
+  if(o instanceof PyDict){
     switch(name){
       case 'keys': return mkView('dict_keys',Array.from(o.keys()));
       case 'values': return mkView('dict_values',Array.from(o.values()));
@@ -2261,12 +2797,12 @@ function* callMethod(o,name,args,kw,line){
       }
       case 'update': {
         const src=args[0];
-        if(src instanceof Map) src.forEach((v,k)=>o.set(k,v));
+        if(src instanceof PyDict) src.forEach((v,k)=>o.set(k,v));
         else for(const p of iterate(src,line)) o.set(p[0],p[1]);
         return null;
       }
       case 'clear': o.clear(); return null;
-      case 'copy': return new Map(o);
+      case 'copy': return new PyDict(o);
     }
     throw new LangError("AttributeError: 'dict' object has no attribute '"+name+"'",line);
   }
@@ -2327,6 +2863,18 @@ function updateButtons(){
   els.bStop.disabled = !RT.running;
   els.bRun.textContent = (RT.running&&RT.paused)?'Resume':'Run';
 }
+/* Same program, one independent instance per bot: separate globals, separate
+   variables, separate position. bot_id() is how a bot knows which one it is. */
+function spawnBot(i){
+  RT.globals[i]=buildGlobals();
+  const prev=W.bot; W.bot=i;
+  RT.gens[i]=execBlock(RT.ast,RT.globals[i]);
+  W.bot=prev;
+}
+function spawnAll(){
+  RT.gens=[]; RT.globals=[]; RT.roundI=0;
+  for(let i=0;i<W.bots.length;i++) spawnBot(i);
+}
 function beginProgram(){
   clearErr();
   let ast;
@@ -2337,9 +2885,14 @@ function beginProgram(){
     return false;
   }
   RT.ast=ast;
-  GLOBALS=buildGlobals();
-  RT.gen=execBlock(ast,GLOBALS);
+  spawnAll();
   RT.running=true; RT.depth=0; RT.acc=0; RT.sinceTick=0; RT.out=0;
+  hinted={};
+  /* the record to beat is the one as it stood when this run began; against the
+     live peak the announcement would fire on every sample while the rate climbed */
+  W.stats.peak=W.stats.peak||{};
+  RT.bestAtStart=Object.assign({},W.stats.peak);
+  RT.toldBest={};
   RT.srcRunning=els.code.value;
   updateApply();
   return true;
@@ -2347,24 +2900,168 @@ function beginProgram(){
 /* Wipe the dish back to a known state without touching what you have earned.
    Deliberately NOT what Stop does - stopping to read the log must be safe. */
 function resetBoard(){
-  if(W.trial){ logLine('Finish or abandon the trial before resetting the dish.','sys'); return; }
+  if(W.trial||W.stage){ logLine('Finish or leave what you are in before resetting the dish.','sys'); return; }
   stopRun(null);
   let cleared=0;
   for(const c of W.grid) if(c.s!==null) cleared++;
   W.maze=false; W.saved=null; W.tx=-1; W.ty=-1;
   initGrid(W.size);
-  W.x=0; W.y=0; W.px=0; W.py=0;
-  W.tick=0; W.wasted=0; W.lastOk=true; W.flash=null;
+  homeBots();
+  W.tick=0; W.wasted=0; W.lastOk=true; W.flash=null; W.pops=[]; W.fx=[];
+  resetFoulClock();
   clearRates();
   logLine('Dish reset — '+cleared+' organism'+(cleared===1?'':'s')+' cleared, substrate back to agar, '+
           'bot home, step count and wasted back to zero. Resources and unlocks kept.','sys');
   save();
   renderRes(); renderStatus(); renderTrials(); sync();
 }
-function armTrial(id){
+function armStage(id){
+  const def=STAGES.find(function(s){ return s.id===id; });
+  if(!def) return;
+  if(W.trial||W.stage){ logLine('Finish or leave what you are in first.','sys'); return; }
+  if(!stageOpen(id)){ logLine('Earlier stages come first.','sys'); return; }
+  stopRun(null);
+  W.stage={
+    def, count:0, streak:0, best:0, start:0, startTick:0,
+    snap:{ size:W.size, x:W.x, y:W.y, tick:W.tick, wasted:W.wasted,
+           species:new Set(W.species), feats:new Set(W.feats),
+           grid:W.grid.map(packCell), res:Object.assign({},W.res),
+           maze:W.maze, saved:W.saved, tx:W.tx, ty:W.ty,
+           bots:W.bots.map(function(b){ return [b.x,b.y]; }) }
+  };
+  RNG=mulberry32(hashId(id));
+  W.maze=false; W.saved=null; W.tx=-1; W.ty=-1;
+  W.wasted=0; W.flash=null; W.lastOk=true; W.pops=[]; W.fx=[];
+  clearRates();
+  initGrid(def.size);
+  homeBots(); W.tick=0;
+  resetFoulClock();
+  for(const k in W.res) W.res[k]=0;
+  /* Lend every species between bacteria and the one this stage works in. The
+     headline species alone is not enough now that nothing is staked: reaching
+     s_bio only requires clearing s_myc, which lends MYCELIUM without granting
+     it, so a player can arrive at the biofilm stage unable to make an enzyme.
+     A stage with no species of its own still needs the chain under whatever it
+     asks you to bank - s_sterile wants 600 spores and opens on s_culture, so
+     it can be reached without ever having bought SPORE. */
+  for(const sp of supplyChain(stageSpecies(def))) W.species.add(sp);
+  if(def.feats) for(const f of def.feats) W.feats.add(f);
+  def.setup();
+  W.stage.start=W.res[def.res]||0;
+  W.stage.startTick=W.tick;
+  logLine('Stage: '+def.nm+'. '+stageGoalText(def)+' Press Run when ready.','good');
+  renderTrials(); renderStatus(); sync();
+}
+/* what a stage is about: the species it teaches, or failing that whatever
+   produces the resource it asks you to bank */
+function stageSpecies(def){ return def.species || (def.res && RES_FROM[def.res]) || 'CULTURE'; }
+function seedCostText(sp){
+  const d=SPECIES[sp];
+  if(!d.cost) return 'free to seed';
+  return Object.keys(d.cost).map(function(r){ return d.cost[r]+' '+r; }).join(' + ')+' to seed';
+}
+function ripenText(sp){
+  const d=SPECIES[sp];
+  return (d.growVar?(d.growVar[0]+'\u2013'+d.growVar[1]):d.grow)+' steps to ripen'+
+         (d.sterile?', needs STERILE':'');
+}
+function chainRows(sp){
+  /* The Tasks column is narrow, so the chain is three tight columns rather than
+     prose - the player is reading it to work out what a bed costs, not to read
+     a sentence. Prices in full are still in Docs. */
+  return '<span class="cost" style="margin-top:7px;color:var(--faint)">grown from nothing:</span>'+
+    supplyChain(sp).map(function(s){
+      const d=SPECIES[s];
+      const cost=d.cost?Object.keys(d.cost).map(function(r){ return d.cost[r]+' '+r; }).join('+'):'free';
+      const gt=(d.growVar?(d.growVar[0]+'–'+d.growVar[1]):d.grow)+'t';
+      return '<span class="cost" style="margin-top:2px;gap:0">'+
+        '<span style="color:'+d.col+';min-width:72px">'+s+'</span>'+
+        '<span style="color:var(--dim);min-width:80px">'+cost+'</span>'+
+        '<span style="color:var(--faint)">'+gt+(d.sterile?' · sterile':'')+'</span></span>';
+    }).join('');
+}
+function stageGoalText(d){
+  if(d.kind==='bank') return 'Bank '+d.target+' '+d.res+'.';
+  if(d.kind==='streak') return d.target+' qualifying harvests in a row.';
+  return d.target+' qualifying harvests.';
+}
+function stageProgress(){
+  const st=W.stage;
+  if(!st) return {now:0,target:0};
+  const d=st.def;
+  if(d.kind==='bank') return {now:Math.max(0,(W.res[d.res]||0)-st.start), target:d.target};
+  if(d.kind==='streak') return {now:st.streak, target:d.target};
+  return {now:st.count, target:d.target};
+}
+/* every harvest reports its quality here, so a stage can judge it */
+function stageHarvest(sp,qual){
+  const st=W.stage;
+  if(!st) return;
+  const d=st.def;
+  if(d.kind==='bank') return;
+  if(d.species&&sp!==d.species) return;
+  if(qual>=d.need){
+    if(d.kind==='streak'){ st.streak++; if(st.streak>st.best) st.best=st.streak; }
+    else st.count++;
+  } else if(d.kind==='streak'){
+    if(st.streak>0) logLine('Streak broken at '+st.streak+' \u2014 that one had '+qual+', it needs '+d.need+'.','bad');
+    st.streak=0;
+  }
+}
+function leaveStage(){
+  const st=W.stage;
+  if(!st) return;
+  const q=st.snap;
+  W.size=q.size; W.grid=q.grid.map(unpackCell);
+  setBotCount(q.bots.length);
+  q.bots.forEach(function(b,i){ W.bots[i].x=b[0]; W.bots[i].y=b[1]; W.bots[i].px=b[0]; W.bots[i].py=b[1]; });
+  W.tick=q.tick; W.wasted=q.wasted; W.res=q.res;
+  W.maze=q.maze; W.saved=q.saved; W.tx=q.tx; W.ty=q.ty;
+  if(q.species) W.species=q.species;      // the loan ends with the stage
+  if(q.feats) W.feats=q.feats;
+  W.stage=null; W.flash=null; W.pops=[]; W.fx=[];
+  lastFoulScan=W.tick;
+  RNG=Math.random;
+}
+function abortStage(msg){
+  if(!W.stage) return;
+  leaveStage(); stopRun(null);
+  logLine(msg||'Left the stage. Your culture is back as it was.','sys');
+  renderTrials(); renderLab(); sync();
+}
+function finishStage(){
+  const st=W.stage, def=st.def;
+  const steps=W.tick-st.startTick;
+  leaveStage(); stopRun(null);
+  W.done[def.id]=true;
+  W.stageBest=W.stageBest||{};
+  const prev=W.stageBest[def.id]||0;
+  const pb=!prev||steps<prev;
+  if(pb) W.stageBest[def.id]=steps;
+  logLine('Stage cleared \u2014 '+def.nm+' in '+steps.toLocaleString()+' steps. '+
+    'Par is '+def.par.toLocaleString()+'.'+
+    (steps<def.par?' That beats the reference program.':'')+
+    (pb&&prev?' Your best was '+prev.toLocaleString()+'.':''),'good');
+  const rivalS=(W.rival||{})[def.id];
+  if(rivalS!==undefined){
+    if(steps<rivalS){
+      logLine('That is '+(rivalS-steps).toLocaleString()+' steps under the '+rivalS.toLocaleString()+
+        ' you were sent.','good');
+      delete W.rival[def.id];
+    } else {
+      logLine('Still '+(steps-rivalS).toLocaleString()+' steps over the '+rivalS.toLocaleString()+
+        ' you were sent.','sys');
+    }
+  }
+  const names=def.opens.map(function(t){ const n=TECH.find(function(x){return x.id===t;}); return n?n.nm:t; });
+  logLine(names.join(' and ')+' can now be bought in the Lab.','good');
+  toast(def.nm+' cleared');
+  renderTrials(); renderLab(); save(); sync();
+}
+function armTrial(id,forceSeed,isDaily){
   const def=CHALLENGES.find(c=>c.id===id);
   if(!def) return;
-  if(W.trial){ logLine('A trial is already running.','sys'); return; }
+  if(W.trial||W.stage){ logLine('Finish or leave what you are in first.','sys'); return; }
   stopRun(null);
   // stash everything, including the real dish, so the trial changes nothing
   W.trial={
@@ -2373,20 +3070,136 @@ function armTrial(id){
            grid:W.grid.map(packCell), res:Object.assign({},W.res),
            maze:W.maze, saved:W.saved, tx:W.tx, ty:W.ty }
   };
-  RNG=mulberry32(hashId(id));            // same dish every attempt
+  const seeded=forceSeed!==undefined||!!(W.seeds&&W.seeds[id]!==undefined);
+  const useSeed=forceSeed!==undefined?forceSeed:((W.seeds&&W.seeds[id]!==undefined)?W.seeds[id]:hashId(id));
+  RNG=mulberry32(useSeed);                              // canonical, rolled, shared or today's
   W.maze=false; W.saved=null; W.tx=-1; W.ty=-1;
-  W.wasted=0; W.flash=null; W.lastOk=true;
+  W.wasted=0; W.flash=null; W.lastOk=true; W.pops=[]; W.fx=[];
   clearRates();
   initGrid(def.size);
-  W.x=0; W.y=0; W.px=0; W.py=0; W.tick=0;
+  homeBots(); W.tick=0;
+  resetFoulClock();
   for(const k in W.res) W.res[k]=0;
-  def.setup();
+  def.setup(seeded);
   W.trial.start=W.res[def.goal]||0;
   W.trial.endTick=def.steps;
+  W.trial.seeded=seeded;
+  W.trial.daily=!!isDaily;
   logLine('Trial ready: '+def.nm+' — '+def.steps+' steps, scoring '+def.goal+
           '. Press Run when your program is ready.','good');
   renderTrials(); renderStatus(); sync();
 }
+/* par is bronze; silver and gold are multiples of it. One number to tune. */
+function tierOf(def,score){
+  let got=null;
+  for(const t of TIERS) if(score>=Math.round(def.par*t[1])) got=t[0];
+  return got;
+}
+function tierTarget(def,name){
+  for(const t of TIERS) if(t[0]===name) return Math.round(def.par*t[1]);
+  return def.par;
+}
+function nextTier(def,score){
+  for(const t of TIERS) if(score<Math.round(def.par*t[1])) return t[0];
+  return null;
+}
+const TIER_COL={bronze:'#c98a52',silver:'#b9c4c2',gold:'#ffce4d'};
+/* Share codes.
+
+   The engine is deterministic and every trial already builds its dish from a
+   string hash, so a seed IS a dish. That makes "beat my score on this exact
+   board" a twenty-character string rather than a server: PA1.sort.k3f9.38g is
+   the trial, the dish, and the number to beat.
+
+   Deliberately no program in the code. The thing worth sending someone is the
+   challenge, not the answer - a solution code would just be a spoiler, and it
+   would be ten times longer. */
+const CODE_TAG='PA1';
+function b36(n){ return Math.max(0,Math.round(n)).toString(36); }
+function makeCode(id,seed,score){
+  return [CODE_TAG,id,b36(seed),b36(score)].join('.');
+}
+function isStageId(id){ return id.slice(0,2)==='s_'; }
+function codeTarget(id){
+  return isStageId(id) ? STAGES.find(function(x){ return x.id===id; })
+                       : CHALLENGES.find(function(x){ return x.id===id; });
+}
+function readCode(txt){
+  const m=String(txt||'').trim().replace(/^.*?(PA1\.)/i,'$1').split('.');
+  if(m.length!==4||m[0].toUpperCase()!==CODE_TAG) return null;
+  if(!codeTarget(m[1])) return null;
+  const seed=parseInt(m[2],36), score=parseInt(m[3],36);
+  if(!isFinite(seed)||!isFinite(score)) return null;
+  return {id:m[1],seed:seed>>>0,score:score,stage:isStageId(m[1])};
+}
+function copyText(t){
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function shareTrial(id,seedOverride){
+  const stage=isStageId(id);
+  const seed=seedOverride!==undefined?seedOverride:((W.seeds&&W.seeds[id])||hashId(id));
+  const score=stage?((W.stageBest||{})[id]||0):((W.best||{})[id]||0);
+  const code=makeCode(id,seed,score);
+  if(copyText(code)) toast('Code copied');
+  logLine('Challenge code: '+code+'  '+DASHC+'  '+
+    (score?(stage?'cleared in '+score+' steps.':'your '+score+' to beat.'):'not cleared yet.')+
+    ' Anyone who pastes it gets this exact dish.','good');
+}
+function takeCode(txt){
+  const c=readCode(txt);
+  if(!c){ logLine('That is not a challenge code. They look like PA1.sort.k3f9.38g','bad'); return false; }
+  const def=codeTarget(c.id);
+  W.rival=W.rival||{}; W.rival[c.id]=c.score;
+  if(c.stage){
+    /* the curriculum is a fixed teaching board, so a stage code carries a time
+       rather than a dish - and it is won by taking fewer steps, not more */
+    logLine('Challenge accepted: '+def.nm+', cleared in '+c.score+' steps. Beat that.','good');
+  } else {
+    W.seeds=W.seeds||{}; W.seeds[c.id]=c.seed;
+    logLine('Challenge accepted: '+def.nm+', their dish, '+c.score+' '+def.goal+' to beat.','good');
+  }
+  renderTrials(); save();
+  return true;
+}
+/* Today's dish.
+
+   Derived from the UTC date, so every player in the world gets the same board on
+   the same day without a server deciding anything. The trial rotates too, so it
+   is not one puzzle with different numbers. Its code is an ordinary share code,
+   so somebody can hand you a past day's dish and you can play it.
+
+   This is the habit: a fixed, comparable puzzle that is gone tomorrow. */
+function dailyKey(d){
+  const t=d||new Date();
+  const p=function(n){ return (n<10?'0':'')+n; };
+  return t.getUTCFullYear()+'-'+p(t.getUTCMonth()+1)+'-'+p(t.getUTCDate());
+}
+function dailyFor(key){
+  const h=hashId('daily:'+key);
+  return { key:key, seed:h, def:CHALLENGES[h%CHALLENGES.length] };
+}
+function dailyToday(){ return dailyFor(dailyKey()); }
+/* a new day clears yesterday's score rather than letting it pass for today's */
+function rollDaily(){
+  const d=dailyToday();
+  W.daily=W.daily||{};
+  if(W.daily.key!==d.key){ W.daily={key:d.key,best:0}; save(); }
+  return d;
+}
+function rollTrial(id){
+  W.seeds=W.seeds||{};
+  W.seeds[id]=(Math.random()*4294967296)>>>0;
+  if(W.rival) delete W.rival[id];
+  logLine('New dish rolled for that trial. Same rules, ground you have not seen.','sys');
+  renderTrials(); save();
+}
+const DASHC='—';
 function hashId(id){ let h=2166136261; for(let i=0;i<id.length;i++){ h^=id.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
 function restoreFromTrial(){
   const t=W.trial; if(!t) return;
@@ -2408,17 +3221,42 @@ function abortTrial(msg){
 function finishTrial(){
   const t=W.trial, def=t.def;
   const score=Math.max(0,(W.res[def.goal]||0)-t.start);
-  const prev=W.best[def.id]||0;
-  const beat=score>prev;
+  /* a rolled or shared dish is a different board, so it does not touch the
+     record for the canonical one - that comparison would be meaningless */
+  const prev=t.seeded?score:(W.best[def.id]||0);
+  const beat=t.seeded?false:score>prev;
   if(beat) W.best[def.id]=score;
   const wasted=W.wasted;
   restoreFromTrial();
   stopRun(null);
   logLine('Trial complete — '+def.nm+': '+score+' '+def.goal+
           ' in '+def.steps+' steps ('+wasted+' wasted).'+
-          (beat?(prev?'  NEW BEST, up from '+prev+'.':'  First score.'):'  Best is still '+prev+'.'),
+          (t.seeded?'  On a rolled dish, so it does not touch your record.'
+                   :(beat?(prev?'  NEW BEST, up from '+prev+'.':'  First score.'):'  Best is still '+prev+'.')),
           beat?'good':'sys');
-  if(score>=def.par) logLine('That clears par ('+def.par+').','good');
+  if(t.daily){
+    W.daily=W.daily||{key:dailyKey(),best:0};
+    if(score>(W.daily.best||0)){
+      W.daily.best=score;
+      logLine('Best on today’s dish so far.','good');
+    }
+  }
+  const rival=(W.rival||{})[def.id];
+  if(rival!==undefined){
+    if(score>rival){
+      logLine('You beat the '+rival+' you were sent. This dish is yours now.','good');
+      delete W.rival[def.id];
+    } else {
+      logLine('Still '+(rival-score)+' short of the '+rival+' you were sent.','sys');
+    }
+  }
+  const tier=t.seeded?null:tierOf(def,score), had=t.seeded?null:tierOf(def,prev);
+  if(tier&&tier!==had) logLine('That is '+tier.toUpperCase()+'.','good');
+  else if(tier) logLine('Still '+tier+'.','sys');
+  const nxt=nextTier(def,Math.max(score,prev));
+  if(nxt) logLine(nxt.charAt(0).toUpperCase()+nxt.slice(1)+' needs '+tierTarget(def,nxt)+'.','sys');
+  else logLine('Every tier on this one is cleared.','good');
+  W.stats.trials=(W.stats.trials||0)+1;
   renderTrials(); save(); sync();
 }
 /* Editing while it runs used to need Stop then Run. Now the edit applies in
@@ -2431,8 +3269,7 @@ function applyChanges(loud){
   try{ ast=compile(); }
   catch(e){ if(loud) showError(e); updateApply(); return false; }
   RT.ast=ast;
-  GLOBALS=buildGlobals();
-  RT.gen=execBlock(ast,GLOBALS);
+  spawnAll();
   RT.depth=0; RT.sinceTick=0;
   RT.srcRunning=els.code.value;
   clearErr();
@@ -2457,44 +3294,65 @@ function startRun(){
   updateButtons();
   logLine('Program started.','good');
 }
-function restartProgram(){
-  GLOBALS=buildGlobals();
-  RT.gen=execBlock(RT.ast,GLOBALS);
-  RT.depth=0; RT.sinceTick=0;
-}
+function restartProgram(){ spawnAll(); RT.depth=0; RT.sinceTick=0; }
 function stopRun(msg){
   if(!RT.running&&!msg) return;
   if(els.bApply) els.bApply.hidden=true;
-  RT.running=false; RT.paused=false; RT.gen=null; RT.line=0;
+  RT.running=false; RT.paused=false; RT.gens=[]; RT.globals=[]; RT.roundI=0; RT.line=0;
   updateButtons();
   if(msg) logLine(msg,'sys');
   save();
 }
 
-function pump(budget){
-  let steps=0;
-  while(RT.ticksFrame<budget){
-    if(++steps>30000) return;
+/* Advance one bot until it performs exactly one action.
+   'acted' | 'done' | 'error' | 'spin' (used its slice of the frame, resume later) */
+function stepBot(i){
+  const g=RT.gens[i];
+  if(!g) return 'done';
+  W.bot=i;
+  GLOBALS=RT.globals[i];
+  let n=0;
+  while(true){
+    if(++n>30000) return 'spin';
     let r;
-    try{ r=RT.gen.next(); }
-    catch(e){
-      showError(e);
-      if(W.trial) abortTrial('Trial ended early: the program raised an error.');
-      else stopRun(null);
-      return;
+    try{ r=g.next(); }
+    catch(e){ RT.err=e; return 'error'; }
+    if(r.done) return 'done';
+    if(r.value===TICK) return 'acted';
+    if(++RT.sinceTick>400000){
+      RT.err=new LangError('This loop ran a very long time without the bot doing anything — stopped it.',RT.line);
+      return 'error';
     }
-    if(r.done){
-      if(els.rep.checked){ restartProgram(); continue; }
-      stopRun('Program finished.'); return;
+  }
+}
+function failRun(){
+  showError(RT.err);
+  if(W.trial) abortTrial('Trial ended early: the program raised an error.');
+  else if(W.stage) abortStage('Stage ended early: the program raised an error.');
+  else stopRun(null);
+}
+function pump(budget){
+  let guard=0;
+  while(RT.ticksFrame<budget){
+    if(++guard>20000) return;
+    /* one round: every live bot takes a single action, then the clock moves once */
+    while(RT.roundI<RT.gens.length){
+      const i=RT.roundI;
+      let r=stepBot(i);
+      if(r==='done'&&els.rep.checked){ spawnBot(i); r=stepBot(i); }
+      if(r==='spin') return;                 // resume this same bot next frame
+      if(r==='error'){ failRun(); return; }
+      if(r==='done') RT.gens[i]=null;
+      RT.roundI++;
     }
-    if(r.value===TICK){
-      RT.ticksFrame++; RT.sinceTick=0;
-      if(W.trial&&W.tick>=W.trial.endTick){ finishTrial(); return; }
-    }
-    else if(++RT.sinceTick>400000){
-      showError(new LangError('This loop ran a very long time without the bot doing anything — stopped it.',RT.line));
-      stopRun(null); return;
-    }
+    RT.roundI=0;
+    if(RT.gens.every(function(g){ return !g; })){ stopRun('Program finished.'); return; }
+    W.tick++; RT.ticksFrame++; RT.sinceTick=0;
+    foulCatchUp();
+    if(W.tick%RATE_EVERY===0) sampleRate();
+    logHistory();
+    if(W.trial&&W.tick>=W.trial.endTick){ finishTrial(); return; }
+    if(W.stage){ const pr=stageProgress(); if(pr.now>=pr.target){ finishStage(); return; } }
   }
 }
 function singleStep(){
@@ -2515,7 +3373,7 @@ function singleStep(){
    ============================================================ */
 const els={};
 ['code','hl','gutter','console','res','dish','stage','status','labpane','apipane','trialpane','profpane','slotSel','slotName','slotNew','slotDel','bBoard','bApply','live',
- 'bRun','bStop','bStep','bClear','bReset','spd','spdv','rep'].forEach(id=>els[id]=document.getElementById(id));
+ 'bRun','bStop','bStep','bClear','bReset','spd','spdv','rep','notrace'].forEach(id=>els[id]=document.getElementById(id));
 
 /* --- console --- */
 let logCount=0;
@@ -2580,19 +3438,31 @@ function highlightLine(src){
   }
   return out;
 }
-let lineEls=[], gutEls=[];
+let lineEls=[], hlin=null, gutin=null;
 function renderEditor(){
   const lines=els.code.value.split('\n');
-  els.hl.innerHTML=lines.map(l=>'<span class="ln">'+(highlightLine(l)||' ')+'</span>').join('');
-  els.gutter.innerHTML=lines.map((_,i)=>'<i>'+(i+1)+'</i>').join('');
-  lineEls=Array.prototype.slice.call(els.hl.children);
-  gutEls=Array.prototype.slice.call(els.gutter.children);
+  els.hl.innerHTML='<div class="edin">'+
+    lines.map(l=>'<span class="ln">'+(highlightLine(l)||' ')+'</span>').join('')+'</div>';
+  els.gutter.innerHTML='<div class="edin">'+
+    lines.map((_,i)=>'<i>'+(i+1)+'</i>').join('')+'</div>';
+  hlin=els.hl.firstChild||null; gutin=els.gutter.firstChild||null;
+  lineEls=hlin&&hlin.children?Array.prototype.slice.call(hlin.children):[];
   paintLines();
   syncScroll();
 }
 let paintedCur=-1, paintedErr=-1;
+/* Above this many steps in a single frame the highlighted line is just whatever
+   the last tick happened to land on, so it strobes across the whole program and
+   makes the editor unreadable. Past it, stop tracing and say so. */
+const TRACE_MAX=6;
+let lastFrameTicks=0, tracedOff=null;
 function paintLines(){
-  const cur=RT.running?RT.line:0, err=RT.errLine;
+  const tooFast=RT.running&&!RT.paused&&lastFrameTicks>TRACE_MAX;
+  if(tooFast!==tracedOff){
+    tracedOff=tooFast;
+    els.notrace.hidden=!tooFast;
+  }
+  const cur=(RT.running&&!tooFast)?RT.line:0, err=RT.errLine;
   if(cur===paintedCur&&err===paintedErr) return;
   if(paintedCur>0&&lineEls[paintedCur-1]) lineEls[paintedCur-1].classList.remove('cur');
   if(paintedErr>0&&lineEls[paintedErr-1]) lineEls[paintedErr-1].classList.remove('err');
@@ -2600,9 +3470,14 @@ function paintLines(){
   if(err>0&&lineEls[err-1]) lineEls[err-1].classList.add('err');
   paintedCur=cur; paintedErr=err;
 }
+/* Translate the layers instead of scrolling them. A textarea showing a
+   horizontal scrollbar is ~9px shorter inside, so its maximum scrollTop is
+   larger than the overlay's - syncing by scrollTop clamps, and the caret drifts
+   up to half a line away from its own text. A transform cannot clamp. */
 function syncScroll(){
-  els.hl.scrollTop=els.code.scrollTop; els.hl.scrollLeft=els.code.scrollLeft;
-  els.gutter.scrollTop=els.code.scrollTop;
+  const x=-els.code.scrollLeft, y=-els.code.scrollTop;
+  if(hlin) hlin.style.transform='translate('+x+'px,'+y+'px)';
+  if(gutin) gutin.style.transform='translateY('+y+'px)';
 }
 
 els.code.addEventListener('input',()=>{ clearErr(); storeSlot(); renderEditor(); saveSoon(); scheduleLive(); });
@@ -2638,59 +3513,232 @@ function renderRes(){
     const d=document.createElement('div');
     d.className='rc'+(known?'':' locked');
     const rt=known?rateFor(r):0;
+    const pk=known?((W.stats.peak||{})[r]||0):0;
     d.innerHTML='<span class="k">'+r+'</span><span class="v" style="color:'+(known?RES_COL[r]:'')+'">'+
       (known?W.res[r]:'—')+'</span>'+
-      '<span class="rt">'+(rt>0?'+'+rt.toFixed(3)+'/step':(rt<0?rt.toFixed(3)+'/step':' '))+'</span>';
+      '<span class="rt">'+(rt>0?'+'+rt.toFixed(3)+'/step':(rt<0?rt.toFixed(3)+'/step':' '))+'</span>'+
+      '<span class="pk">'+(pk>0?'best '+pk.toFixed(3):' ')+'</span>';
     els.res.appendChild(d);
   }
 }
 
 /* --- tech tree --- */
 function canAfford(c){ for(const k in c) if(W.res[k]<c[k]) return false; return true; }
-function renderLab(){
-  els.labpane.innerHTML='';
-  const rb=document.createElement('button');
-  rb.className='tiny';
-  rb.style.cssText='margin-bottom:10px;width:100%;padding:6px;text-align:center';
-  rb.textContent='reset dish — clear the board, bot home, keep everything earned';
-  rb.addEventListener('click',resetBoard);
-  els.labpane.appendChild(rb);
-  let group=null;
+let labSel=null;
+
+/* Three branches, drawn as a trace that fills in behind you. The zigzag is the
+   intended order through a group; the trace between two nodes lights only when
+   both ends are owned, so the diagram reads as a facility coming online. */
+const LAB_W=286, NODE_W=124, NODE_H=32, ROW=54, COLX=[12,150];
+function labGroups(){
+  const out=[]; let g=null;
   for(const t of TECH){
-    if(t.g!==group){
-      group=t.g;
-      const h=document.createElement('div'); h.className='grp'; h.textContent=group;
-      els.labpane.appendChild(h);
-    }
-    const owned=W.owned.has(t.id);
-    const afford=canAfford(t.cost);
-    const b=document.createElement('button');
-    b.className='node '+(owned?'owned':afford?'afford':'poor');
-    b.disabled=owned;
-    let cost='';
-    for(const k in t.cost){
-      const short=W.res[k]<t.cost[k];
-      cost+='<span class="'+(short?'short':'')+'" style="color:'+(short?'':RES_COL[k])+'">'+t.cost[k]+' '+k+'</span>';
-    }
-    b.innerHTML='<span class="nm">'+t.nm+'</span>'+(t.ds?'<span class="ds">'+t.ds+'</span>':'')+'<span class="cost">'+cost+'</span>';
-    if(!owned) b.addEventListener('click',()=>buy(t));
-    els.labpane.appendChild(b);
+    if(!g||g.name!==t.g){ g={name:t.g,items:[]}; out.push(g); }
+    g.items.push(t);
   }
+  return out;
 }
+const TASK_COL='#ffd24d';
+function stageLock(t){
+  const sg=STAGE_GATE[t.id];
+  return (sg&&!W.owned.has(t.id)&&!stageDone(sg))?sg:null;
+}
+function nodeState(t){
+  if(W.owned.has(t.id)) return 'own';
+  const pre=TECH_REQ[t.id]||[];
+  if(pre.some(function(id){ return !W.owned.has(id); })) return 'blocked';
+  /* affordable but not earned is its own thing, and the most important thing
+     to show: the player has done the work, they just need the task */
+  if(stageLock(t)) return canAfford(t.cost)?'task':'tasklock';
+  return canAfford(t.cost)?'ready':'poor';
+}
+
+/* Four things, ticking themselves off as you do them.
+
+   Telling somebody what to do is a wall of text they skim; showing them what
+   they have already done is a scoreboard they finish. It reacts to the world
+   rather than to a script, so there is no tutorial to get out of sync with the
+   game, and it deletes itself the moment the fourth line goes green. */
+const INTRO=[
+  ['planted',  'Plant something',            'seed(CULTURE) on an empty cell'],
+  ['harvested','Take it once it is ripe',    'harvest() on a cell that has finished growing'],
+  ['banked',   'Bank 32 bacteria',           'enough to buy your first upgrade'],
+  ['looped',   'Buy Iteration in the Lab',   'while loops, so the program can keep going']
+];
+function introDone(){ return INTRO.every(function(r){ return (W.intro||{})[r[0]]; }); }
+function introMark(k){
+  W.intro=W.intro||{};
+  if(W.intro[k]) return;
+  W.intro[k]=1;
+  if(introDone()) logLine('That is the loop the whole game is built on. The rest is making it faster.','good');
+  renderLab();
+}
+function introCheck(){
+  if(introDone()) return;
+  if(W.res.bacteria>=32) introMark('banked');
+  if(W.owned.has('loop')) introMark('looped');
+}
+function introHtml(){
+  if(introDone()) return '';
+  let h='<div class="grp" style="margin-top:2px">First steps</div>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:10px">';
+  for(const r of INTRO){
+    const got=!!(W.intro||{})[r[0]];
+    h+='<tr><td style="width:15px;padding:3px 0;color:'+(got?'var(--cyan)':'var(--faint)')+'">'+
+       (got?'✓':'○')+'</td>'+
+       '<td style="color:'+(got?'var(--dim)':'var(--ink)')+
+       (got?';text-decoration:line-through':'')+'">'+r[1]+
+       '<div style="font-family:var(--mono);font-size:10px;color:var(--faint)">'+r[2]+'</div></td></tr>';
+  }
+  return h+'</table>';
+}
+function renderLab(){
+  if(!els.labpane) return;
+  const groups=labGroups();
+  let svg='', head='';
+  head+=introHtml();
+  head+='<button class="tiny" id="labReset" style="margin-bottom:10px;width:100%;padding:6px;text-align:center">'+
+        'reset dish — clear the board, bot home, keep everything earned</button>';
+
+  for(const g of groups){
+    const col=GROUP_COL[g.name]||'#4fe3c1';
+    const n=g.items.length;
+    const h=10+n*ROW;
+    svg+='<div class="grp" style="color:'+col+'">'+g.name+'</div>';
+    svg+='<svg class="labsvg" viewBox="0 0 '+LAB_W+' '+h+'" width="100%" height="'+h+'" '+
+         'preserveAspectRatio="xMidYMin meet">';
+    /* traces first so nodes sit on top */
+    for(let i=0;i<n-1;i++){
+      const a=g.items[i], b=g.items[i+1];
+      const ax=COLX[i%2]+NODE_W/2, ay=8+i*ROW+NODE_H;
+      const bx=COLX[(i+1)%2]+NODE_W/2, by=8+(i+1)*ROW;
+      const lit=W.owned.has(a.id)&&W.owned.has(b.id);
+      svg+='<path d="M'+ax+' '+ay+' C'+ax+' '+(ay+14)+', '+bx+' '+(by-14)+', '+bx+' '+by+'" '+
+           'fill="none" stroke="'+(lit?col:'#3a534d')+'" stroke-width="'+(lit?2.2:1.5)+'" '+
+           (lit?'':'stroke-dasharray="4 4" ')+'opacity="'+(lit?0.95:0.85)+'"/>';
+    }
+    for(let i=0;i<n;i++){
+      const t=g.items[i], st=nodeState(t);
+      const x=COLX[i%2], y=8+i*ROW;
+      let fill='#0d1615', stroke='#1d2b28', tc='#4e615c', sw=1;
+      if(st==='own'){ fill=col+'26'; stroke=col; tc='#d8e6e1'; sw=1.4; }
+      else if(st==='ready'){ fill='#0e1c1a'; stroke=col; tc=col; sw=1.6; }
+      else if(st==='task'){ fill='#221c08'; stroke=TASK_COL; tc=TASK_COL; sw=1.8; }
+      else if(st==='tasklock'){ fill='#15130c'; stroke='#6b5a28'; tc='#8a7940'; }
+      else if(st==='poor'){ fill='#0d1615'; stroke='#2a3c38'; tc='#7b938c'; }
+      const sel=labSel===t.id;
+      svg+='<g class="labnode" data-id="'+t.id+'" style="cursor:pointer">';
+      if(sel) svg+='<rect x="'+(x-3)+'" y="'+(y-3)+'" width="'+(NODE_W+6)+'" height="'+(NODE_H+6)+
+                   '" rx="7" fill="none" stroke="#d8e6e1" stroke-width="1" opacity=".75"/>';
+      svg+='<rect x="'+x+'" y="'+y+'" width="'+NODE_W+'" height="'+NODE_H+'" rx="5" '+
+           'fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'"/>';
+      svg+='<text x="'+(x+NODE_W/2)+'" y="'+(y+NODE_H/2+4)+'" text-anchor="middle" '+
+           'font-family="Chakra Petch, sans-serif" font-size="11" fill="'+tc+'">'+
+           esc(shortName(t))+'</text>';
+      if(st==='own')
+        svg+='<text x="'+(x+NODE_W-9)+'" y="'+(y+12)+'" text-anchor="middle" font-size="10" fill="'+col+'">✓</text>';
+      if(st==='blocked')
+        svg+='<text x="'+(x+9)+'" y="'+(y+NODE_H/2+4)+'" text-anchor="middle" font-size="10" fill="#4e615c">·</text>';
+      if(st==='task'||st==='tasklock')
+        svg+='<text x="'+(x+NODE_W-9)+'" y="'+(y+12)+'" text-anchor="middle" font-size="11" fill="'+
+             (st==='task'?TASK_COL:'#6b5a28')+'">⚑</text>';
+      svg+='</g>';
+    }
+    svg+='</svg>';
+  }
+  els.labpane.innerHTML=head+svg+'<div id="labcard"></div>';
+  const rb=document.getElementById('labReset');
+  if(rb) rb.addEventListener('click',resetBoard);
+  els.labpane.querySelectorAll('.labnode').forEach(function(el){
+    el.addEventListener('click',function(){ labSel=el.dataset.id; renderLab(); });
+  });
+  renderLabCard();
+}
+
+function renderLabCard(){
+  const box=document.getElementById('labcard');
+  if(!box) return;
+  if(!labSel){
+    box.innerHTML='<div class="grp">Detail</div>'+
+      '<div style="font-size:11.5px;color:var(--dim);line-height:1.45">Pick anything above to read what it '+
+      'does and buy it. Filled nodes are yours; the trace lights up between two you own.</div>';
+    return;
+  }
+  const t=TECH.find(function(x){ return x.id===labSel; });
+  if(!t){ box.innerHTML=''; return; }
+  const st=nodeState(t), col=GROUP_COL[t.g]||'#4fe3c1';
+  let cost='';
+  for(const k in t.cost){
+    const short=W.res[k]<t.cost[k];
+    cost+='<span style="color:'+(short?'var(--warn)':RES_COL[k])+'">'+t.cost[k]+' '+k+
+          (short?' (have '+W.res[k]+')':'')+'</span>';
+  }
+  let h='<div class="grp" style="color:'+col+'">'+t.g+'</div>'+
+        '<div class="tcard'+(st==='own'?' done':'')+'">'+
+        '<span class="nm" style="color:'+(st==='own'?'var(--dim)':col)+'">'+t.nm+
+        (st==='own'?' ✓':'')+'</span>'+
+        '<span class="ds">'+t.ds+'</span>'+
+        (st==='own'?'':'<span class="cost">'+cost+'</span>');
+  const sg=stageLock(t);
+  if(st==='blocked')
+    h+='<span class="ds" style="color:var(--warn);margin-top:6px">Needs '+
+       reqMissing(t).join(' and ')+' first.</span>';
+  if(sg){
+    const stg=STAGES.find(function(x){ return x.id===sg; });
+    const open=stageOpen(sg);
+    h+='<span class="ds" style="color:'+TASK_COL+';margin-top:6px">'+
+       (st==='task'?'You can afford this. ':'')+
+       'It has to be earned: clear the <strong>'+stg.nm+'</strong> stage.'+
+       (open?'':' Earlier stages come first.')+'</span>';
+  }
+  if(st!=='own'){
+    h+='<div class="trow">';
+    if(sg){
+      const open=stageOpen(sg)&&!W.trial&&!W.stage;
+      h+='<button class="tbtn" id="labstage" style="'+
+         (open?'background:'+TASK_COL+';border-color:'+TASK_COL+';color:#241d04':'opacity:.4')+'"'+
+         (open?'':' disabled')+'>Begin stage</button>';
+    } else {
+      h+='<button class="tbtn'+(st==='ready'?' go':'')+'" id="labbuy"'+
+         (st==='ready'?'':' disabled style="opacity:.4"')+'>'+
+         (st==='blocked'?'Locked':st==='ready'?'Buy':'Too expensive')+'</button>';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+  box.innerHTML=h;
+  const bb=document.getElementById('labbuy');
+  if(bb&&st==='ready') bb.addEventListener('click',function(){ buy(t); });
+  const sb=document.getElementById('labstage');
+  if(sb&&!sb.disabled) sb.addEventListener('click',function(){ armStage(sg); showPane('trials'); });
+}
+
 function buy(t){
   if(W.owned.has(t.id)) return;
+  /* Stage and trial resources are scored and thrown away, and leaveStage puts
+     W.res and W.feats back from the snapshot while W.owned is not restored --
+     buying in here left you owning a tech whose feature had been stripped. */
+  if(W.trial||W.stage){ toast('Not while you are in a '+(W.stage?'stage':'trial')); return; }
+  if(!reqMet(t)){ toast('Needs '+reqMissing(t).join(' + ')+' first'); return; }
   if(!canAfford(t.cost)){ toast('Not enough resources'); return; }
   for(const k in t.cost) W.res[k]-=t.cost[k];
   W.owned.add(t.id);
   if(t.feat) W.feats.add(t.feat);
   if(t.species) W.species.add(t.species);
-  if(t.species==='SPORE') W.feats.add('sterile');
+  if(t.species==='SPORE'){
+    W.feats.add('sterile');
+    resetFoulClock();          // the neglect clock starts now, not back at tick zero
+    logLine('Sterile technique online. Contamination starts from here: ground left untended goes bad '+
+      'and takes its neighbours, and sterilize() is what clears it. Keep a lap going over everything '+
+      'you have planted.','sys');
+  }
   if(t.size){
     // a bigger dish means a different labyrinth, so any run in progress is forfeit
     if(W.maze){ restoreFarm(); logLine('Labyrinth abandoned to fit the new dish.','sys'); }
     resizeGrid(t.size);
   }
   if(t.speed) W.speedTier+=t.speed;
+  if(t.twin){ setBotCount(2); homeBots(); if(RT.running) spawnAll(); }
   toast(t.nm+' unlocked');
   renderLab(); renderRes(); renderApi(); updateSpeedLabel(); save();
 }
@@ -2763,45 +3811,209 @@ let trialNote=null;
 function renderTrials(){
   if(!els.trialpane) return;
   trialNote=null;
-  els.trialpane.innerHTML='<div class="grp">Trials</div>'+
+  els.trialpane.innerHTML=
+    '<div class="grp">Curriculum</div>'+
     '<div style="font-size:11.5px;color:var(--dim);line-height:1.45;margin:0 0 10px">'+
-    'A trial sets up a fixed dish and gives you a step budget. Load one, get your program ready, '+
-    'then press Run. The dish is identical every attempt, so a better score means better code. '+
-    'Nothing earned in a trial is kept and your own culture is put back exactly as you left it.</div>';
+    'Each stage sets up a clean dish and asks you to prove one thing. Clearing it is what lets the '+
+    'Lab sell you the next species — resources decide when you can afford it, these decide whether '+
+    'you have earned it. Your own culture is untouched.<br><br>'+
+    'A stage gives you nothing: an empty dish and an empty ledger, and every cell you plant has to '+
+    'be paid for out of what you grew on the same dish. The chain under each one is priced below. '+
+    'The Lab is closed while you are in here.</div>';
+
+  for(const st of STAGES){
+    const done=stageDone(st.id), open=stageOpen(st.id), live=W.stage&&W.stage.def.id===st.id;
+    const card=document.createElement('div');
+    card.className='tcard'+(live?' live':(done?' done':''));
+    if(!open&&!done) card.style.opacity='.45';
+    const opens=st.opens.map(function(t){ const n=TECH.find(function(x){return x.id===t;}); return n?n.nm:t; });
+    card.innerHTML='<span class="nm" style="color:'+(done?'var(--ok)':live?'var(--amber)':'var(--ink)')+'">'+
+        st.nm+(done?' ✓':'')+'</span>'+
+      '<span class="ds">'+st.ds+'</span>'+
+      '<span class="cost">'+
+        '<span style="color:var(--dim)">'+st.size+'×'+st.size+'</span>'+
+        '<span style="color:var(--faint)">'+stageGoalText(st)+'</span>'+
+        '<span style="color:#8ef58a">opens '+opens.join(' + ')+'</span>'+
+        '<span style="color:var(--faint)">par '+st.par.toLocaleString()+' steps</span>'+
+        (((W.stageBest||{})[st.id])?'<span style="color:var(--amber)">your best '+
+          W.stageBest[st.id].toLocaleString()+'</span>':'')+
+        (((W.rival||{})[st.id]!==undefined)?'<span style="color:var(--ice)">chasing '+
+          W.rival[st.id].toLocaleString()+'</span>':'')+
+      '</span>'+
+      chainRows(stageSpecies(st));
+    const row=document.createElement('div');
+    row.className='trow';
+    if(live){
+      const pr=stageProgress();
+      const note=document.createElement('span');
+      note.style.cssText='font-family:var(--mono);font-size:11px;color:var(--amber);align-self:center;margin-right:auto';
+      note.textContent=RT.running?(pr.now+' / '+pr.target):'ready — press Run';
+      trialNote=note;
+      row.appendChild(note);
+      const drop=document.createElement('button');
+      drop.className='tbtn drop'; drop.textContent='Leave';
+      drop.addEventListener('click',function(){ abortStage(); });
+      row.appendChild(drop);
+    } else if(!done){
+      const go=document.createElement('button');
+      go.className='tbtn'+(open?' go':'');
+      go.textContent=open?'Begin':'Locked';
+      go.disabled=!open||!!W.trial||!!W.stage;
+      if(go.disabled) go.style.opacity='.4';
+      else go.addEventListener('click',function(){ armStage(st.id); });
+      row.appendChild(go);
+    } else {
+      const again=document.createElement('button');
+      again.className='tbtn'; again.textContent='Replay';
+      again.disabled=!!W.trial||!!W.stage;
+      if(again.disabled) again.style.opacity='.4';
+      else again.addEventListener('click',function(){ armStage(st.id); });
+      row.appendChild(again);
+      const shs=document.createElement('button');
+      shs.className='tbtn'; shs.textContent='Share';
+      shs.addEventListener('click',function(){ shareTrial(st.id); });
+      row.appendChild(shs);
+    }
+    card.appendChild(row);
+    els.trialpane.appendChild(card);
+  }
+
+  /* today's dish, above everything, because it is the thing that expires */
+  const dy=rollDaily();
+  const dh=document.createElement('div');
+  dh.className='grp'; dh.textContent='Today';
+  els.trialpane.appendChild(dh);
+  const dcard=document.createElement('div');
+  const dlive=W.trial&&W.trial.daily;
+  dcard.className='tcard'+(dlive?' live':(W.daily&&W.daily.best?' done':''));
+  dcard.innerHTML='<span class="nm">'+dy.def.nm+'</span>'+
+    '<span class="ds">Everyone gets this same dish today, and a different one tomorrow. '+
+    dy.def.ds+'</span>'+
+    '<span class="cost">'+
+      '<span style="color:var(--ice)">'+dy.key+'</span>'+
+      '<span style="color:var(--dim)">'+dy.def.size+'×'+dy.def.size+' · '+dy.def.steps+' steps</span>'+
+      '<span style="color:'+RES_COL[dy.def.goal]+'">scores '+dy.def.goal+'</span>'+
+      ((W.daily&&W.daily.best)?'<span style="color:var(--amber)">today’s best '+W.daily.best+'</span>':'')+
+    '</span>';
+  const drow=document.createElement('div');
+  drow.className='trow';
+  if(dlive){
+    const dn=document.createElement('span');
+    dn.style.cssText='font-family:var(--mono);font-size:11px;color:var(--amber);align-self:center;margin-right:auto';
+    dn.textContent=RT.running?(Math.max(0,W.trial.endTick-W.tick)+' steps left'):'ready — press Run';
+    trialNote=dn;
+    drow.appendChild(dn);
+    const dd=document.createElement('button');
+    dd.className='tbtn drop'; dd.textContent='Abandon';
+    dd.addEventListener('click',function(){ abortTrial(); });
+    drow.appendChild(dd);
+  } else {
+    const dgo=document.createElement('button');
+    dgo.className='tbtn go'; dgo.textContent=(W.daily&&W.daily.best)?'Play again':'Play';
+    dgo.disabled=!!W.trial||!!W.stage;
+    if(dgo.disabled) dgo.style.opacity='.4';
+    else dgo.addEventListener('click',function(){ armTrial(dy.def.id,dy.seed,true); });
+    drow.appendChild(dgo);
+    const dsh=document.createElement('button');
+    dsh.className='tbtn'; dsh.textContent='Share';
+    dsh.addEventListener('click',function(){
+      const code=makeCode(dy.def.id,dy.seed,(W.daily&&W.daily.best)||0);
+      if(copyText(code)) toast('Code copied');
+      logLine('Today’s dish ('+dy.key+'): '+code+'  '+DASHC+'  '+
+        ((W.daily&&W.daily.best)?'your '+W.daily.best+' to beat.':'unscored so far.'),'good');
+    });
+    drow.appendChild(dsh);
+  }
+  dcard.appendChild(drow);
+  els.trialpane.appendChild(dcard);
+
+  const th=document.createElement('div');
+  th.className='grp'; th.textContent='Trials';
+  els.trialpane.appendChild(th);
+  const tb=document.createElement('div');
+  tb.style.cssText='font-size:11.5px;color:var(--dim);line-height:1.45;margin:0 0 10px';
+  tb.textContent='Optional, and scored. A fixed dish and a step budget, identical every attempt, so a '+
+                 'better score means better code. Nothing earned inside is kept. Roll for a dish nobody '+
+                 'has seen, or paste somebody else’s code to take theirs.';
+  els.trialpane.appendChild(tb);
+  const paste=document.createElement('div');
+  paste.style.cssText='display:flex;gap:6px;margin:0 0 10px';
+  const pin=document.createElement('input');
+  pin.type='text'; pin.placeholder='paste a challenge code';
+  pin.style.cssText='flex:1;min-width:0;font-family:var(--mono);font-size:11px;color:var(--ink);'+
+    'background:#111c1a;border:1px solid var(--line2);border-radius:3px;padding:4px 7px';
+  const pgo=document.createElement('button');
+  pgo.className='tbtn'; pgo.textContent='Take';
+  const accept=function(){ if(takeCode(pin.value)) pin.value=''; };
+  pgo.addEventListener('click',accept);
+  pin.addEventListener('keydown',function(e){ if(e.key==='Enter') accept(); });
+  paste.appendChild(pin); paste.appendChild(pgo);
+  els.trialpane.appendChild(paste);
+
   for(const c of CHALLENGES){
     const best=W.best[c.id]||0;
     const live=W.trial&&W.trial.def.id===c.id;
     const card=document.createElement('div');
-    card.className='tcard'+(live?' live':(best>=c.par?' done':''));
+    card.className='tcard'+(live?' live':(best>=Math.round(c.par*2.4)?' done':''));
     card.innerHTML='<span class="nm">'+c.nm+'</span><span class="ds">'+c.ds+'</span>'+
       '<span class="cost">'+
         '<span style="color:var(--dim)">'+c.size+'×'+c.size+' · '+c.steps+' steps</span>'+
         '<span style="color:'+RES_COL[c.goal]+'">scores '+c.goal+'</span>'+
-        '<span style="color:var(--faint)">par '+c.par+'</span>'+
-        (best?'<span style="color:'+(best>=c.par?'var(--ok)':'var(--ink)')+'">best '+best+'</span>':'')+
-      '</span>';
+      '</span><span class="cost" style="margin-top:4px">'+
+        TIERS.map(function(t){
+          const need=Math.round(c.par*t[1]), got=best>=need;
+          return '<span style="color:'+(got?TIER_COL[t[0]]:'var(--faint)')+'">'+
+                 (got?'◆':'◇')+' '+t[0]+' '+need+'</span>';
+        }).join('')+
+        (best?'<span style="color:var(--ink)">best '+best+'</span>':'')+
+      '</span>'+
+      (((W.seeds||{})[c.id]!==undefined)||((W.rival||{})[c.id]!==undefined)
+        ?'<span class="cost" style="margin-top:4px">'+
+          (((W.seeds||{})[c.id]!==undefined)?'<span style="color:var(--ice)">shared dish</span>':'')+
+          (((W.rival||{})[c.id]!==undefined)?'<span style="color:var(--amber)">chasing '+W.rival[c.id]+'</span>':'')+
+         '</span>':'');
     const row=document.createElement('div');
     row.className='trow';
     if(live){
       const note=document.createElement('span');
       note.style.cssText='font-family:var(--mono);font-size:11px;color:var(--amber);align-self:center;margin-right:auto';
-      note.textContent=RT.running?(Math.max(0,W.trial.endTick-W.tick)+' steps left')
-                                 :'ready — press Run';
+      note.textContent=RT.running?(Math.max(0,W.trial.endTick-W.tick)+' steps left'):'ready — press Run';
       trialNote=note;
       row.appendChild(note);
       const drop=document.createElement('button');
-      drop.className='tbtn drop';
-      drop.textContent='Abandon';
-      drop.addEventListener('click',()=>abortTrial());
+      drop.className='tbtn drop'; drop.textContent='Abandon';
+      drop.addEventListener('click',function(){ abortTrial(); });
       row.appendChild(drop);
     } else {
       const go=document.createElement('button');
-      go.className='tbtn go';
-      go.textContent=best?'Retry':'Load';
-      go.disabled=!!W.trial;
-      if(W.trial) go.style.opacity='.4';
-      else go.addEventListener('click',()=>armTrial(c.id));
+      go.className='tbtn go'; go.textContent=best?'Retry':'Load';
+      go.disabled=!!W.trial||!!W.stage;
+      if(go.disabled) go.style.opacity='.4';
+      else go.addEventListener('click',function(){ armTrial(c.id); });
       row.appendChild(go);
+      const roll=document.createElement('button');
+      roll.className='tbtn'; roll.textContent='Roll dish';
+      roll.disabled=!!W.trial||!!W.stage;
+      if(roll.disabled) roll.style.opacity='.4';
+      else roll.addEventListener('click',function(){ rollTrial(c.id); });
+      row.appendChild(roll);
+      const sh=document.createElement('button');
+      sh.className='tbtn'; sh.textContent='Share';
+      sh.addEventListener('click',function(){ shareTrial(c.id); });
+      row.appendChild(sh);
+      if((W.seeds||{})[c.id]!==undefined){
+        const rst=document.createElement('button');
+        rst.className='tbtn'; rst.textContent='Original';
+        rst.disabled=!!W.trial||!!W.stage;
+        if(rst.disabled) rst.style.opacity='.4';
+        else rst.addEventListener('click',function(){
+          delete W.seeds[c.id];
+          if(W.rival) delete W.rival[c.id];
+          logLine('Back to the original dish for that trial.','sys');
+          renderTrials(); save();
+        });
+        row.appendChild(rst);
+      }
     }
     card.appendChild(row);
     els.trialpane.appendChild(card);
@@ -2820,7 +4032,7 @@ function renderProf(){
   if(!total){
     h+='<div style="font-size:11.5px;color:var(--dim);line-height:1.45">Nothing measured yet. '+
        'Run a program \u2014 every action it takes is counted here. Resetting the dish starts a fresh measurement.</div>';
-    els.profpane.innerHTML=h; return;
+    els.profpane.innerHTML=h+recordHtml(); return;
   }
   h+='<div style="font-size:11.5px;color:var(--dim);margin-bottom:8px">'+total+
      ' steps measured. A step spent walking or looking is a step not spent harvesting.</div>'+
@@ -2854,44 +4066,167 @@ function renderProf(){
   }
   h+= any?('<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">'+any+'</table>')
         :'<div style="font-size:11.5px;color:var(--dim)">No resource is moving right now.</div>';
+  h+=recordHtml();
   els.profpane.innerHTML=h;
+}
+function xy(n){ return String(Math.round(n*100)/100); }
+/* Lifetime totals as bars, on a log scale: bacteria run to hundreds of thousands
+   while crystals are in the hundreds, and on a linear axis every bar but one is
+   invisible. The number beside each bar is the real figure. */
+function gatheredHtml(){
+  const g=(W.stats||{}).got||{};
+  const any=RES_ORDER.filter(function(r){ return g[r]; });
+  if(!any.length) return '';
+  const top=Math.max.apply(null,RES_ORDER.map(function(r){ return g[r]||0; }));
+  const lg=function(v){ return v>0?Math.log10(v+1):0; };
+  let h='<div class="grp">Everything you have gathered</div>'+
+        '<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">';
+  for(const r of RES_ORDER){
+    const v=g[r]||0, w=top>0?Math.round(100*lg(v)/lg(top)):0;
+    h+='<tr><td style="padding:3px 0;width:62px;color:'+(v?RES_COL[r]:'var(--faint)')+'">'+r+'</td>'+
+       '<td style="padding-right:8px"><div style="height:9px;border-radius:2px;background:#0c1614">'+
+       '<div style="height:9px;border-radius:2px;width:'+w+'%;background:'+RES_COL[r]+';opacity:.82"></div></div></td>'+
+       '<td style="text-align:right;width:74px;color:var(--ink);font-variant-numeric:tabular-nums">'+
+       v.toLocaleString()+'</td></tr>';
+  }
+  h+='</table><div style="font-size:10.5px;color:var(--faint);margin-top:4px">'+
+     'Bars are log-scaled — the tiers are orders of magnitude apart.</div>';
+  return h;
+}
+/* The shape of the run: five lines, each normalised to its own peak, so a
+   resource that only ever reaches 300 is still readable beside one at 300,000.
+   What you are reading is the SHAPE - where a line went flat is where that tier
+   stalled, and that is the thing worth seeing. */
+function historyHtml(){
+  const hs=W.hist||[];
+  if(hs.length<3) return '<div class="grp">The run so far</div>'+
+    '<div style="font-size:11.5px;color:var(--dim);line-height:1.45">Not enough history yet. '+
+    'A point is logged every '+HIST_EVERY+' steps once a program is running.</div>';
+  const Wd=262, Hg=96, pad=3;
+  const t0=hs[0][0], t1=hs[hs.length-1][0], span=Math.max(1,t1-t0);
+  let h='<div class="grp">The run so far</div>'+
+        '<svg viewBox="0 0 '+Wd+' '+Hg+'" width="100%" height="'+Hg+'" style="display:block">'+
+        '<rect x="0" y="0" width="'+Wd+'" height="'+Hg+'" fill="#0a1211" rx="3"/>';
+  for(let i=1;i<4;i++)
+    h+='<line x1="0" y1="'+(Hg*i/4)+'" x2="'+Wd+'" y2="'+(Hg*i/4)+'" stroke="#16211f" stroke-width="1"/>';
+  RES_ORDER.forEach(function(r,ri){
+    const col=ri+1;
+    let top=0;
+    for(const p of hs) if(p[col]>top) top=p[col];
+    if(top<=0) return;
+    let d='';
+    hs.forEach(function(p,i){
+      const x=pad+(Wd-pad*2)*(p[0]-t0)/span;
+      const y=Hg-pad-(Hg-pad*2)*(p[col]/top);
+      d+=(i?'L':'M')+xy(x)+' '+xy(y);
+    });
+    h+='<path d="'+d+'" fill="none" stroke="'+RES_COL[r]+'" stroke-width="1.6" '+
+       'stroke-linejoin="round" opacity=".9"/>';
+  });
+  h+='</svg><div style="font-size:10.5px;color:var(--faint);margin-top:3px;line-height:1.45">'+
+     'Each line is scaled to its own peak, so read the shape rather than the height. '+
+     'Flat means that tier stalled. '+(t1-t0).toLocaleString()+' steps shown.</div>';
+  return h;
+}
+function recordHtml(){
+  const st=W.stats||{};
+  const rows=[
+    ['steps taken',      st.acts||0],
+    ['cells walked',     st.walked||0],
+    ['organisms taken',  st.harvests||0],
+    ['labyrinths solved',st.mazes||0],
+    ['trials run',       st.trials||0]
+  ];
+  let h='<div class="grp">The record</div>'+
+        '<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">';
+  for(const r of rows)
+    h+='<tr><td style="padding:3px 0;color:var(--dim)">'+r[0]+'</td>'+
+       '<td style="text-align:right;color:var(--ink);font-variant-numeric:tabular-nums">'+r[1]+'</td></tr>';
+  h+='</table>';
+  /* The tech tree runs out at around 79,000 steps and then there is nothing left
+     to chase, which is a strange way to end an optimisation game. This is the
+     scoreboard that carries on afterwards: the peak is already a sustained rate
+     over a 1000-step window, so all it needed was targets worth aiming at.
+     Gold sits above what the reference programs in stages/ manage, so clearing
+     it means writing something better than anything in the repo. */
+  const pk=st.peak||{};
+  h+='<div class="grp">Rate ladder</div>'+
+     '<div style="font-size:11px;color:var(--faint);margin:-2px 0 6px;line-height:1.45">'+
+     'Your best sustained rate, measured over a thousand steps. Gold is past what the reference '+
+     'programs manage.</div>'+
+     '<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">';
+  for(const r of RES_ORDER){
+    const v=pk[r]||0, t=RATE_TIERS[r];
+    let rank=0;
+    for(let i=0;i<t.length;i++) if(v>=t[i]) rank=i+1;
+    const medal=['','● bronze','● silver','● gold'][rank];
+    const mcol=['var(--faint)','#c08a5a','#b9c6c4','#ffcf4d'][rank];
+    const next=rank<3?t[rank]:0;
+    h+='<tr><td style="padding:3px 0;color:'+(v?RES_COL[r]:'var(--faint)')+'">'+r+'</td>'+
+       '<td style="text-align:right;color:var(--ink);font-variant-numeric:tabular-nums;padding-right:8px">'+
+       (v?v.toFixed(3):'—')+'</td>'+
+       '<td style="width:66px;color:'+mcol+'">'+(medal||'')+'</td>'+
+       '<td style="text-align:right;color:var(--faint);font-variant-numeric:tabular-nums">'+
+       (next?'next '+next:'max')+'</td></tr>';
+  }
+  h+='</table>';
+  h+=gatheredHtml()+historyHtml();
+  h+='<div style="font-size:11px;color:var(--faint);margin-top:8px;line-height:1.45">'+
+     'This is the whole history of your lab. Resetting the dish does not touch it.</div>';
+  return h;
 }
 
 /* --- api reference --- */
 const API=[
   {h:'Movement & the dish'},
-  {s:'move(dir)',d:'Move one cell. <code>NORTH EAST SOUTH WEST</code>. The dish wraps around its edges.'},
+  {s:'jump(x, y)',d:'Put the bot on cell <code>x, y</code> for a flat <strong>4 steps</strong>, however far away it is. Walking is one step a cell, so jump only pays past four — and the dish wraps, which makes the real walking distance <code>min(dx, n-dx) + min(dy, n-dy)</code>, often much less than it looks. Costs the four steps whether it lands or not. Does nothing in the labyrinth.',f:'jump'},
+  {s:'FOULED ground',d:'A cell nobody has stood on for a while goes bad on its own — the window is twelve steps per cell of the dish, so it scales as the dish grows, and a program that laps its whole dish never meets it. Fouled ground grows nothing, and every 260 steps it takes the cells orthogonally beside it, destroying whatever was in them. <code>sterilize()</code> is the cure. The point: an idle corner is not free, so a dish you cannot keep up with is worse than a smaller one you can.'},
+  {s:'move(dir)',d:'Move one cell. <code>NORTH EAST SOUTH WEST</code>. The dish wraps around its edges. Returns False and costs the step anyway if something is in the way — a labyrinth wall, or the other bot.'},
   {s:'pos_x()',d:'Column of the bot, 0 to dish_size()-1. Free — costs no step.'},
   {s:'pos_y()',d:'Row of the bot. Free.'},
   {s:'dish_size()',d:'Width of the dish in cells. Free.'},
+  {s:'steps()',d:'The dish clock \u2014 how many steps have passed. Free, and the only way to work out when something you planted will come up.'},
   {h:'Working a cell'},
   {s:'harvest()',d:'Collect the organism here if it is mature. Returns True if something was taken. '+
     'A grab that comes up empty costs <strong>two</strong> steps instead of one and flashes red on the dish, '+
     'so when you are genuinely unsure it is cheaper to ask <code>mature()</code> first.'},
   {s:'seed(species)',d:'Plant here, if the cell is empty, the substrate suits it, and you can pay. Returns True on success.'},
   {s:'wait()',d:'Do nothing for one step. This is how you let things grow once Fast optics has made looking free.'},
-  {s:'sterilize()',d:'Turn this cell’s substrate to STERILE. Destroys whatever is growing on it.',f:'sterile'},
+  {s:'replant()',d:'harvest() and seed() the same species in a single action. Returns what harvest() would. If the crop comes up but the seed cannot be paid for — no resources, or the agar has gone back to AGAR — you still get the harvest and the cell is left empty. It never plants a <em>different</em> species, so a bed you want to convert to a higher tier still takes a harvest() and a seed().',f:'replant'},
+  {s:'sterilize()',d:'Turn this cell’s substrate to STERILE, and destroy whatever is growing on it. '+
+    'A treatment is good for '+STERILE_CROPS+' crops: every harvest taken from a treated cell wears it '+
+    'down, whatever was growing there, and when the last one is spent the cell goes back to AGAR. '+
+    'Treating a cell that is already at full strength changes nothing, returns False and counts as a '+
+    'wasted step — but topping up a partly spent one is real work and counts. The gauge along the '+
+    'bottom of a treated cell shows what is left. It is also the only thing that clears contamination.',f:'sterile'},
   {s:'adjacency',d:'MYCELIUM is the first species whose payout depends on its neighbours. '+
     'Scattered plantings pay 1 each and barely cover the seed cost; a ripe 3×3 block pays '+
     '1 + up to 4 per cell. If enzymes feel impossibly slow, you are almost certainly planting them apart.'},
   {h:'Ripeness'},
-  {s:'the ripe window',d:'CULTURE and SPORE do not wait forever. A cell pays full value for a while after it ripens, '+
-    'then its payout ramps down to a single unit, and eventually it rots and the cell is lost. '+
+  {s:'the ripe window',d:'A cell pays full value for a while after it ripens, then its payout ramps down to a '+
+    'single unit and stays there. CULTURE and SPORE never die outright, so arriving late costs you yield rather '+
+    'than the crop — but a cell paying 1 instead of 4 is still a bed you are wasting. STRAND is the exception: '+
+    'it rots away for real, and catching it before it does is the whole point of it. '+
     'The ring around a fading cell drains clockwise and its colour slides toward red, so you can see a crop going off.'},
   {s:'why it matters',d:'Your lap length is what decides this. Three steps per cell means a 5×5 dish is an 80-step round trip, '+
-    'which comfortably beats the window — but a 7×7 is 154 steps and you will arrive to half-value cells. '+
-    'Farm fewer cells, or route to the ones that are actually ready.'},
+    'which comfortably beats the window — but a 7×7 is 154 steps and you will arrive to half-value cells, and a 15×15 '+
+    'is nearer 700. A bigger dish is not automatically a better one for a single bot: measured on a plain snake it runs '+
+    '1.23 bacteria a step at 5×5 and 0.28 at 15×15. Farm fewer cells, route to the ones actually ready, or put a second '+
+    'bot on it.'},
   {h:'Sensors'},
   {s:'scan()',d:'The species growing here, or <code>None</code>.'},
   {s:'mature()',d:'True when the organism here is ready to harvest.'},
-  {s:'substrate()',d:'<code>AGAR</code> or <code>STERILE</code>.'},
+  {s:'substrate()',d:'<code>AGAR</code>, <code>STERILE</code> or <code>FOULED</code>. Since treatment wears out, this is how you find the '+
+    'cells in a running bed that have gone back to agar — and the ones that have gone bad. It costs a step until you own Fast optics.'},
   {s:'measure()',d:'Facet count of the CRYSTAL here, else 0.',f:'measure'},
   {s:'swap(dir)',d:'Exchange this cell’s contents with the neighbour in that direction.',f:'measure'},
   {h:'The labyrinth'},
   {s:'maze()',d:'Flood the dish into a labyrinth and drop the bot at the top-left. Your culture is stored and comes back untouched when you claim the payload. Calling it again regenerates the labyrinth.',f:'maze'},
-  {s:'blocked(dir)',d:'True when a wall or the dish edge stops you moving that way. Inside the labyrinth the dish does not wrap, and <code>move()</code> returns False when it fails.',f:'maze'},
+  {s:'blocked(dir)',d:'True when anything stops you moving that way — a labyrinth wall, the edge of a labyrinth, or the other bot standing in the cell. Inside the labyrinth the dish does not wrap.',f:'maze'},
   {s:'in_maze()',d:'True while a labyrinth run is in progress. Free.',f:'maze'},
   {s:'scan() → PAYLOAD',d:'Inside the labyrinth, scan() reports <code>PAYLOAD</code> on the buried cell and <code>None</code> everywhere else. Harvest it to claim crystals equal to the dish’s cell count.',f:'maze'},
+  {s:'bot_id()',d:'Which bot is running this copy of the program, counting from 0. Free. Two bots cannot stand in the same cell, so this is how you give them different ground to work.',f:'twin'},
+  {s:'bots()',d:'How many bots you have. Free.',f:'twin'},
   {h:'Bookkeeping'},
   {s:'num(resource)',d:'How much you hold. <code>BACTERIA SPORES ENZYMES BIOMASS CRYSTALS</code>. Free.'},
   {s:'print(x, ...)',d:'Write to the log. Free.'},
@@ -2927,13 +4262,15 @@ function renderApi(){
   for(const k in SPECIES){
     const s=SPECIES[k], known=W.species.has(k);
     h+='<div class="sp"><span class="dot" style="background:'+(known?s.col:'#33403d')+'"></span><span class="sn" style="color:'+(known?s.col:'#4e615c')+'">'+k+(known?'':' — locked')+'</span></div>';
-    if(known){
+    {
       let bits=[s.growVar?(s.growVar[0]+'–'+s.growVar[1]+' steps to mature, rolled per planting'):(s.grow+' steps to mature')];
       bits.push(s.sterile?'needs STERILE substrate':'grows on any substrate');
       if(s.cost){ const c=[]; for(const r in s.cost) c.push(s.cost[r]+' '+r); bits.push('costs '+c.join(', ')+' to seed'); }
       h+='<dd style="margin-left:16px">'+bits.join(' · ')+'. '+SPECIES_NOTE[k]+
          (s.fade?' Holds full value for '+s.peak+' steps once ripe, then the payout ramps down to 1 over the next '+
-           s.fade+' — the ring drains as it goes. After '+s.life+' steps ripe it rots away and the cell is lost.':
+           s.fade+' — the ring drains as it goes.'+
+           (s.life?' After '+s.life+' steps ripe it rots away and the cell is lost.'
+                  :' It never dies outright, so a late harvest costs you yield rather than the crop.'):
            ' Never spoils.')+'</dd>';
     }
   }
@@ -2943,12 +4280,192 @@ const SPECIES_NOTE={
   CULTURE:'Pays up to 4 bacteria. Every planting takes a different time to come up, so mature() is worth asking.',
   SPORE:'Pays up to 8 spores.',
   MYCELIUM:'Pays 1 enzyme plus 1 for each ripe mycelium orthogonally touching it at the moment you harvest. A lone one pays 1 for its seed cost, which is a bad trade; one in the middle of a ripe patch pays 5. Plant it in blocks, let the whole block ripen, and watch the filaments light up — only glowing links count. Harvesting removes a neighbour, so the order you harvest a patch in changes the total.',
-  BIOFILM:'Harvesting one cell takes the whole connected patch and pays the <em>square</em> of its size — but only if every cell in it is mature. Otherwise nothing happens.',
+  BIOFILM:'Harvesting one cell takes the whole connected patch and pays the <em>square</em> of its size — but only if every cell in it is mature; otherwise nothing happens. '+
+    'A colony larger than '+BIO_COHERE+' cells loses cohesion at the centre and only '+BIO_COHERE+' of it ever pays, so the '+
+    'best layout is several separated patches rather than one that fills the dish. Leaving the middle row and column bare '+
+    'splits any dish into four colonies that each pay their own square.',
+  STRAND:'Pays the square of the unbroken run of ripe strand it sits in, along its row, counting round the dish edge. '+
+    'A lone one pays 1; seven in a row pays 49. Every planting ripens at its own pace and only counts for a while, '+
+    'so the longest run is a moment you have to catch.',
   CRYSTAL:'Pays its facet count if it is the highest mature facet count on the dish; otherwise 1. Use measure() and swap() to put the dish in order.'
 };
 
 /* --- canvas --- */
-const FLASH_MS=420;
+const FLASH_MS=420, POP_MS=900, FX_MS=620;
+/* Payout numbers that rise off the cell they came from. Real time, not steps,
+   so they stay readable whether you are at 8/s or 3000/s. */
+/* One floating number per harvest reads well at eight steps a second. At three
+   thousand it is several hundred overlapping numbers a second, none of them
+   legible and none of them saying anything the per-step rate under each resource
+   does not already say. So a payout is not drawn when it happens - it goes in a
+   buffer that is merged once per frame, one figure per resource, placed where
+   the bot ended up. At one tick per frame that is exactly the old behaviour. */
+function pop(x,y,text,col,amount){
+  if(amount===undefined){ W.pops.push({x,y,text,col,t:performance.now()}); trimPops(); return; }
+  const b=RT.popBuf;
+  for(const e of b) if(e.col===col){ e.n+=amount; e.x=x; e.y=y; return; }
+  b.push({x,y,col,n:amount});
+}
+function trimPops(){ if(W.pops.length>24) W.pops.splice(0,W.pops.length-24); }
+function flushFrameFx(){
+  if(RT.popBuf.length){
+    const now=performance.now();
+    for(const e of RT.popBuf) W.pops.push({x:e.x,y:e.y,text:'+'+e.n,col:e.col,t:now});
+    RT.popBuf.length=0;
+    trimPops();
+  }
+  if(RT.fxBuf.length){
+    const now=performance.now();
+    for(const e of RT.fxBuf){
+      W.fx.push({kind:e.kind,x:e.x,y:e.y,col:e.col,cells:e.cells,t:now,seed:(e.x*31+e.y*17)%360});
+    }
+    RT.fxBuf.length=0;
+    if(W.fx.length>36) W.fx.splice(0,W.fx.length-36);
+  }
+}
+/* Every harvest used to look the same: a number floating up. On a dish running
+   four crops at once the number is the one thing you cannot read at speed, so
+   each species now leaves a shape of its own and you can tell what came in from
+   the other side of the room. */
+/* Same problem, same answer: at most one burst per species per frame. A shape
+   drawn four hundred times over itself is a solid block of colour. */
+function burst(kind,x,y,col,cells){
+  const b=RT.fxBuf;
+  for(const e of b) if(e.kind===kind){ e.x=x; e.y=y; e.cells=cells||e.cells; return; }
+  b.push({kind,x,y,col,cells:cells||null});
+}
+function jumpFx(x0,y0,x1,y1){
+  W.fx.push({kind:'JUMP',x:x1,y:y1,from:[x0,y0],col:'#7fd7ff',cells:null,t:performance.now(),seed:0});
+  if(W.fx.length>36) W.fx.splice(0,W.fx.length-36);
+}
+function drawFx(pad,cs,n){
+  if(!W.fx.length) return;
+  const now=performance.now();
+  const mid=(x,y)=>[pad+x*cs+cs/2,pad+y*cs+cs/2];
+  ctx.save();
+  ctx.lineCap='round';
+  for(let i=W.fx.length-1;i>=0;i--){
+    const q=W.fx[i], age=now-q.t;
+    if(age>=FX_MS||q.x>=n||q.y>=n){ W.fx.splice(i,1); continue; }
+    const k=age/FX_MS, fade=1-k, ease=1-Math.pow(1-k,3);
+    const [mx,my]=mid(q.x,q.y);
+    ctx.globalAlpha=fade;
+    ctx.strokeStyle=q.col; ctx.fillStyle=q.col;
+    if(q.kind==='CULTURE'){
+      /* a ring pushing out, the way a colony spreads */
+      ctx.lineWidth=Math.max(1.5,cs*0.10*fade);
+      ctx.beginPath(); ctx.arc(mx,my,cs*(0.12+0.42*ease),0,Math.PI*2); ctx.stroke();
+    }
+    else if(q.kind==='SPORE'){
+      /* a puff of spores thrown clear */
+      for(let a=0;a<9;a++){
+        const ang=(q.seed+a*40)*Math.PI/180, d=cs*(0.08+0.50*ease);
+        ctx.beginPath();
+        ctx.arc(mx+Math.cos(ang)*d,my+Math.sin(ang)*d,Math.max(1.5,cs*0.085*fade),0,Math.PI*2);
+        ctx.fill();
+      }
+    }
+    else if(q.kind==='MYCELIUM'){
+      /* the links snap back toward the cell that took them */
+      ctx.lineWidth=Math.max(1.5,cs*0.09*fade);
+      for(let a=0;a<4;a++){
+        const ang=a*Math.PI/2, near=cs*(0.10+0.34*ease), far=cs*(0.46+0.16*ease);
+        ctx.beginPath();
+        ctx.moveTo(mx+Math.cos(ang)*near,my+Math.sin(ang)*near);
+        ctx.lineTo(mx+Math.cos(ang)*far,my+Math.sin(ang)*far);
+        ctx.stroke();
+      }
+    }
+    else if(q.kind==='BIOFILM'){
+      /* the whole colony lifts off together */
+      const cells=q.cells||[[q.x,q.y]];
+      ctx.globalAlpha=fade*fade*0.55;
+      for(const c of cells){
+        if(c[0]>=n||c[1]>=n) continue;
+        const [px,py]=mid(c[0],c[1]);
+        const r=cs*0.44*(1+0.28*ease);
+        rr(px-r,py-r,r*2,r*2,r*0.30);
+        ctx.fill();
+      }
+      ctx.globalAlpha=fade;
+      ctx.lineWidth=Math.max(1.5,cs*0.08*fade);
+      for(const c of cells){
+        if(c[0]>=n||c[1]>=n) continue;
+        const [px,py]=mid(c[0],c[1]);
+        const r=cs*0.44*(1+0.28*ease);
+        rr(px-r,py-r,r*2,r*2,r*0.30);
+        ctx.stroke();
+      }
+    }
+    else if(q.kind==='CRYSTAL'){
+      /* facets thrown off the lattice */
+      ctx.lineWidth=Math.max(1.2,cs*0.07*fade);
+      for(let a=0;a<5;a++){
+        const ang=(q.seed+45+a*72)*Math.PI/180, d=cs*(0.08+0.52*ease), r=cs*0.15*fade;
+        const px=mx+Math.cos(ang)*d, py=my+Math.sin(ang)*d;
+        ctx.beginPath();
+        ctx.moveTo(px,py-r); ctx.lineTo(px+r,py); ctx.lineTo(px,py+r); ctx.lineTo(px-r,py);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    else if(q.kind==='STRAND'){
+      /* a pulse running the length of the row it took */
+      const cells=q.cells||[[q.x,q.y]];
+      ctx.globalAlpha=fade*0.85;
+      ctx.lineWidth=Math.max(2,cs*0.20*fade);
+      for(const c of cells){
+        if(c[0]>=n||c[1]>=n) continue;
+        const [px,py]=mid(c[0],c[1]);
+        ctx.beginPath(); ctx.moveTo(px-cs*0.44,py); ctx.lineTo(px+cs*0.44,py); ctx.stroke();
+      }
+    }
+    else if(q.kind==='JUMP'){
+      /* drawn straight rather than wrapped: the point is where it went, and a
+         line leaving one edge to reappear at the other reads as noise */
+      const f=q.from;
+      if(f&&f[0]<n&&f[1]<n){
+        const fm=mid(f[0],f[1]);
+        ctx.globalAlpha=fade*fade*0.8;
+        ctx.lineWidth=Math.max(1.5,cs*0.10*fade);
+        ctx.setLineDash([cs*0.16,cs*0.12]);
+        ctx.beginPath(); ctx.moveTo(fm[0],fm[1]); ctx.lineTo(mx,my); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha=fade;
+        ctx.beginPath(); ctx.arc(mx,my,cs*(0.14+0.30*ease),0,Math.PI*2); ctx.stroke();
+      }
+    }
+    else if(q.kind==='PAYLOAD'){
+      ctx.lineWidth=Math.max(2,cs*0.12*fade);
+      for(const r of [0.2,0.45,0.7]){
+        ctx.beginPath(); ctx.arc(mx,my,cs*(r+0.5*ease),0,Math.PI*2); ctx.stroke();
+      }
+    }
+  }
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+function drawPops(pad,cs,n){
+  if(!W.pops.length) return;
+  const now=performance.now();
+  ctx.save();
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(let i=W.pops.length-1;i>=0;i--){
+    const q=W.pops[i], age=now-q.t;
+    if(age>=POP_MS||q.x>=n||q.y>=n){ W.pops.splice(i,1); continue; }
+    const k=age/POP_MS;
+    const px=pad+q.x*cs+cs/2, py=pad+q.y*cs+cs/2-k*cs*0.75;
+    ctx.globalAlpha=k<0.15?(k/0.15):(1-(k-0.15)/0.85);
+    ctx.font='600 '+Math.max(11,Math.round(cs*0.30))+'px "IBM Plex Mono",monospace';
+    ctx.lineWidth=3; ctx.strokeStyle='rgba(4,10,9,.85)';
+    ctx.strokeText(q.text,px,py);
+    ctx.fillStyle=q.col;
+    ctx.fillText(q.text,px,py);
+  }
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+const BOT_COL=[{line:'#4fe3c1',fill:'rgba(79,227,193,.14)'},
+               {line:'#b98cff',fill:'rgba(185,140,255,.14)'}];
 /* past its peak a cell slides from its own colour toward rot red, so you can
    see a crop going off before you lose it */
 function hexMix(a,b,t){
@@ -2983,12 +4500,21 @@ function draw(){
   // dish rim
   ctx.save();
   ctx.beginPath(); ctx.arc(cw/2,ch/2,cw/2-2,0,Math.PI*2);
-  const g=ctx.createRadialGradient(cw/2,ch*0.35,cw*0.1,cw/2,ch/2,cw/2);
-  g.addColorStop(0,'#10201d'); g.addColorStop(1,'#0a1413');
+  const g=ctx.createRadialGradient(cw/2,ch*0.30,cw*0.05,cw/2,ch/2,cw/2);
+  g.addColorStop(0,'#16302b'); g.addColorStop(0.55,'#0e1f1c'); g.addColorStop(1,'#080f0f');
   ctx.fillStyle=g; ctx.fill();
-  ctx.strokeStyle='#22403a'; ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle='#2c5a50'; ctx.lineWidth=2; ctx.stroke();
   ctx.beginPath(); ctx.arc(cw/2,ch/2,cw/2-7,0,Math.PI*2);
-  ctx.strokeStyle='rgba(79,227,193,.10)'; ctx.lineWidth=1; ctx.stroke();
+  ctx.strokeStyle='rgba(79,227,193,.18)'; ctx.lineWidth=1; ctx.stroke();
+  /* a slow sheen across the glass, the one thing on screen that moves when the
+     program is stopped */
+  const sh=ctx.createLinearGradient(0,0,cw,ch);
+  const ph=(performance.now()/5200)%1;
+  sh.addColorStop(Math.max(0,ph-0.18),'rgba(79,227,193,0)');
+  sh.addColorStop(ph,'rgba(120,255,225,.045)');
+  sh.addColorStop(Math.min(1,ph+0.18),'rgba(79,227,193,0)');
+  ctx.beginPath(); ctx.arc(cw/2,ch/2,cw/2-3,0,Math.PI*2);
+  ctx.fillStyle=sh; ctx.fill();
   ctx.restore();
 
   for(let y=0;y<n;y++) for(let x=0;x<n;x++){
@@ -3002,17 +4528,77 @@ function draw(){
       continue;
     }
     rr(bx,by,bs,bs,Math.min(5,bs*0.16));
-    ctx.fillStyle= c.g==='sterile' ? '#14262a' : '#0f1c19';
-    ctx.fill();
-    ctx.strokeStyle= c.g==='sterile' ? 'rgba(127,215,255,.14)' : 'rgba(79,227,193,.06)';
-    ctx.lineWidth=1; ctx.stroke();
+    if(c.g==='fouled'){
+      /* deliberately the ugliest thing on the dish, and the only warm colour on
+         it, so a patch spreading is visible from across the room */
+      const due=Math.max(0,Math.min(1,(W.tick-(c.ft||0))/FOUL_SPREAD));
+      ctx.fillStyle='#3a2a16'; ctx.fill();
+      ctx.strokeStyle='rgba(214,150,58,'+(0.30+0.45*due).toFixed(3)+')';
+      ctx.lineWidth=1; ctx.stroke();
+      const mx=bx+bs/2, my=by+bs/2;
+      ctx.save();
+      ctx.fillStyle='#d6963a';
+      for(let k=0;k<4;k++){
+        const a=(k*97+(x*31+y*17))%360*Math.PI/180, d=bs*0.20;
+        ctx.globalAlpha=0.28+0.30*due;
+        ctx.beginPath();
+        ctx.arc(mx+Math.cos(a)*d,my+Math.sin(a)*d,bs*(0.11+0.06*due),0,Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+      continue;
+    }
+    if(c.g==='sterile'){
+      /* The blue drains out of treated agar as the treatment is used up, so a
+         bed going off is visible before substrate() has to tell you. */
+      const q=Math.max(0,Math.min(1,(c.sc||0)/STERILE_CROPS));
+      ctx.fillStyle='rgb('+Math.round(14+12*q)+','+Math.round(26+20*q)+','+Math.round(28+30*q)+')';
+      ctx.fill();
+      ctx.strokeStyle='rgba(127,215,255,'+(0.05+0.24*q).toFixed(3)+')';
+      ctx.lineWidth=1; ctx.stroke();
+      if(bs>20){
+        ctx.fillStyle='rgba(127,215,255,.10)';
+        ctx.fillRect(bx+4,by+bs-4.5,bs-8,2.6);
+        ctx.fillStyle='rgba(140,222,255,'+(0.35+0.5*q).toFixed(3)+')';
+        ctx.fillRect(bx+4,by+bs-4.5,(bs-8)*q,2.6);
+      }
+    } else {
+      ctx.fillStyle='#0f1c19'; ctx.fill();
+      ctx.strokeStyle='rgba(79,227,193,.06)';
+      ctx.lineWidth=1; ctx.stroke();
+    }
 
     if(c.s&&!isRotted(c)){
       const sp=SPECIES[c.s], p=growth(c), mat=p>=1;
       const col=cellColor(c), fresh=freshness(c);
       const mx=bx+bs/2, my=by+bs/2;
       ctx.save();
-      if(c.s==='MYCELIUM'){
+      /* a plain wide fill rather than a shadow blur: at 15x15 that is 225 cells
+         a frame and canvas shadows will not carry it */
+      if(mat){
+        ctx.globalAlpha=0.13*(0.55+0.45*fresh);
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.arc(mx,my,bs*0.62,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=1;
+      }
+      if(c.s==='STRAND'){
+        // links east/west only, and only bright when both ends would count
+        for(const dx of [1,-1]){
+          const nb=cell(wrap(x+dx),y);
+          if(nb.s!=='STRAND') continue;
+          const joined=mat&&isMature(nb);
+          ctx.strokeStyle=col;
+          ctx.globalAlpha=joined?0.9:0.15;
+          ctx.lineWidth=joined?Math.max(2,bs*0.16):Math.max(1,bs*0.05);
+          ctx.beginPath(); ctx.moveTo(mx,my); ctx.lineTo(mx+dx*cs*0.5,my); ctx.stroke();
+        }
+        ctx.globalAlpha=1;
+        const w=bs*0.44*(0.4+0.6*p), hh=bs*0.20*(0.5+0.5*p);
+        rr(mx-w,my-hh,w*2,hh*2,hh);
+        ctx.fillStyle=col; ctx.globalAlpha=0.35+0.5*p; ctx.fill(); ctx.globalAlpha=1;
+        if(mat){ ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.stroke(); }
+      }
+      else if(c.s==='MYCELIUM'){
         ctx.strokeStyle=col;
         for(const q of neighbours(x,y)){
           const nb=cell(q[0],q[1]);
@@ -3048,10 +4634,14 @@ function draw(){
           ctx.globalAlpha=1;
         }
       } else {
-        const r=bs*0.42*(0.32+0.68*p);
+        const r=bs*0.42*(0.42+0.58*p);
         ctx.beginPath(); ctx.arc(mx,my,r,0,Math.PI*2);
-        ctx.fillStyle=col; ctx.globalAlpha=0.32+0.5*p; ctx.fill(); ctx.globalAlpha=1;
+        ctx.fillStyle=col; ctx.globalAlpha=0.42+0.42*p; ctx.fill(); ctx.globalAlpha=1;
       }
+      /* every occupied cell gets a faint boundary, so a freshly seeded one is
+         never mistaken for bare agar */
+      ctx.beginPath(); ctx.arc(mx,my,bs*0.44,0,Math.PI*2);
+      ctx.strokeStyle=col; ctx.globalAlpha=0.22; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
       if(mat){
         ctx.beginPath();
         if(fresh>=1){
@@ -3082,21 +4672,34 @@ function draw(){
     }
   }
 
-  // bot
-  const bxc=pad+W.px*cs+cs/2, byc=pad+W.py*cs+cs/2, br=cs*0.30;
-  ctx.save();
-  ctx.beginPath();
-  for(let i=0;i<6;i++){
-    const a=Math.PI/6+i*Math.PI/3;
-    const px=bxc+Math.cos(a)*br, py=byc+Math.sin(a)*br;
-    i?ctx.lineTo(px,py):ctx.moveTo(px,py);
+  // bots
+  for(let b=0;b<W.bots.length;b++){
+    const bot=W.bots[b], col=BOT_COL[b%BOT_COL.length];
+    const bxc=pad+bot.px*cs+cs/2, byc=pad+bot.py*cs+cs/2, br=cs*0.30;
+    ctx.save();
+    ctx.beginPath();
+    for(let i=0;i<6;i++){
+      const a=Math.PI/6+i*Math.PI/3;
+      const px=bxc+Math.cos(a)*br, py=byc+Math.sin(a)*br;
+      i?ctx.lineTo(px,py):ctx.moveTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fillStyle=col.fill; ctx.fill();
+    ctx.strokeStyle=col.line; ctx.lineWidth=Math.max(1.4,cs*0.045); ctx.stroke();
+    ctx.beginPath(); ctx.arc(bxc,byc,Math.max(1.5,br*0.2),0,Math.PI*2);
+    ctx.fillStyle=col.line; ctx.fill();
+    if(W.bots.length>1&&cs>30){
+      ctx.font='600 '+Math.round(cs*0.2)+'px "IBM Plex Mono",monospace';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle=col.line; ctx.globalAlpha=.85;
+      ctx.fillText(String(b),bxc,byc-br-cs*0.13);
+      ctx.globalAlpha=1;
+    }
+    ctx.restore();
   }
-  ctx.closePath();
-  ctx.fillStyle='rgba(79,227,193,.14)'; ctx.fill();
-  ctx.strokeStyle='#4fe3c1'; ctx.lineWidth=Math.max(1.4,cs*0.045); ctx.stroke();
-  ctx.beginPath(); ctx.arc(bxc,byc,Math.max(1.5,br*0.2),0,Math.PI*2);
-  ctx.fillStyle='#4fe3c1'; ctx.fill();
-  ctx.restore();
+
+  drawFx(pad,cs,n);
+  drawPops(pad,cs,n);
 
   // a wasted action leaves a fading red cross on the cell it happened in
   if(W.flash){
@@ -3128,8 +4731,11 @@ function renderStatus(){
   els.status.innerHTML=
     (W.trial?'<span style="color:#ffb54d">▸ '+W.trial.def.nm+' <b>'+
         Math.max(0,W.trial.endTick-W.tick)+'</b> left</span>':'')+
+    (W.stage?(function(){ const pr=stageProgress();
+        return '<span style="color:#8ef58a">\u25b8 '+W.stage.def.nm+' <b>'+pr.now+' / '+pr.target+'</b>'+
+               (W.stage.def.kind==='streak'&&W.stage.best>pr.now?' (best '+W.stage.best+')':'')+'</span>'; })():'')+
     'step <b>'+W.tick+'</b>'+
-    '<span>pos <b>'+W.x+', '+W.y+'</b></span>'+
+    '<span>pos <b>'+W.bots.map(function(b){ return b.x+','+b.y; }).join('  ')+'</b></span>'+
     (W.trial?'':'<span>dish <b>'+W.size+'×'+W.size+(W.maze?' labyrinth':'')+'</b></span>')+
     '<span>last <b'+(W.lastOk?'':' style="color:#ff6b5e"')+'>'+W.lastAct+
       (W.lastOk?'':' ✗')+'</b></span>'+
@@ -3158,16 +4764,21 @@ function frame(now){
       pump(budget);
     }
   }
+  flushFrameFx();
+  lastFrameTicks=RT.ticksFrame;
   const k=Math.min(1,dt*14);
-  W.px+= (W.x-W.px)*k; W.py+= (W.y-W.py)*k;
-  if(Math.abs(W.px-W.x)<0.002) W.px=W.x;
-  if(Math.abs(W.py-W.y)<0.002) W.py=W.y;
+  for(const b of W.bots){
+    b.px+=(b.x-b.px)*k; b.py+=(b.y-b.py)*k;
+    if(Math.abs(b.px-b.x)<0.002) b.px=b.x;
+    if(Math.abs(b.py-b.y)<0.002) b.py=b.y;
+  }
   draw(); paintLines();
   sync();
   requestAnimationFrame(frame);
 }
 let lastSig='', lastASig='';
 function sync(){
+  introCheck();
   const sig=W.tick+'|'+RT.running+'|'+W.res.bacteria+'|'+W.res.spores+'|'+W.res.enzymes+'|'+W.res.biomass+'|'+W.res.crystals;
   if(sig!==lastSig){ lastSig=sig; renderRes(); renderStatus(); }
   // the tech panel is expensive to rebuild and hostile to rebuild while you are
@@ -3184,20 +4795,30 @@ function sync(){
 /* v2: Python language core, 5x5 starting dish, retuned tech tree.
    A v1 save would load a 3x3 dish and the old starter, so it starts fresh. */
 const KEY='petri-automaton-v2';
-const packCell=c=>[c.g==='sterile'?1:0,c.s,c.t,c.f,c.w?1:0,c.gt||0];
-const unpackCell=a=>({g:a[0]?'sterile':'agar',s:a[1],t:a[2]||0,f:a[3]||0,w:!!a[4],gt:a[5]||0});
+const GCODE={agar:0,sterile:1,fouled:2}, GNAME=['agar','sterile','fouled'];
+const packCell=c=>[GCODE[c.g]||0,c.s,c.t,c.f,c.w?1:0,c.gt||0,c.sc||0,c.seen||0,c.ft||0];
+/* a save from before sterility wore off has no sc: treat those cells as freshly
+   treated rather than silently spent, so nobody loses a dish to the upgrade */
+const unpackCell=a=>({g:GNAME[a[0]]||'agar',s:a[1],t:a[2]||0,f:a[3]||0,w:!!a[4],gt:a[5]||0,
+                      sc:a[6]!==undefined?a[6]:(a[0]===1?STERILE_CROPS:0),
+                      seen:a[7]||0, ft:a[8]||0});
 let saveT=0;
 function saveSoon(){ clearTimeout(saveT); saveT=setTimeout(save,700); }
 function save(){
   // a trial's dish is scratch state; writing it would overwrite the real culture
-  if(W.trial) return;
+  if(W.trial||W.stage) return;
   try{
     localStorage.setItem(KEY,JSON.stringify({
       code:els.code.value, res:W.res, owned:Array.from(W.owned),
       size:W.size, tick:W.tick, x:W.x, y:W.y,
       grid:W.grid.map(packCell),
       maze:W.maze, tx:W.tx, ty:W.ty, wasted:W.wasted, best:W.best,
-      slots:W.slots, slot:W.slot, live:els.live.checked,
+      slots:W.slots, slot:W.slot, live:els.live.checked, stats:W.stats, done:W.done,
+      seeds:W.seeds||{}, rival:W.rival||{}, hist:W.hist||[], daily:W.daily||null,
+      intro:W.intro||{},
+      stageBest:W.stageBest||{},
+      replantNoticed:true,
+      bots:W.bots.map(function(b){ return [b.x,b.y]; }),
       saved:W.saved?{size:W.saved.size,x:W.saved.x,y:W.saved.y,grid:W.saved.grid.map(packCell)}:null,
       spd:els.spd.value, rep:els.rep.checked
     }));
@@ -3212,27 +4833,18 @@ function applyOwned(){
     if(t.species==='SPORE') W.feats.add('sterile');
     if(t.speed) W.speedTier+=t.speed;
   }
+  setBotCount(W.owned.has('twin')?2:1);
 }
 const STARTER=
-'# This is Python. Your nanobot is the hexagon on the top-left\n'+
-'# cell. It does nothing at all until you tell it to.\n'+
-'#\n'+
-'# Every call below costs one step of dish time. Nothing grows\n'+
-'# while the bot is idle, so time only moves when it acts.\n'+
-'#\n'+
-'# This is your whole toolkit right now. Uncomment the ones you\n'+
-'# want and put them in an order that works:\n'+
+'# Press Run. Something will grow, and then the log will tell you\n'+
+'# why it stopped working. Fix that, and you have a farm.\n'+
 '\n'+
-'# harvest()      # collect whatever has finished growing in this cell\n'+
-'# seed(CULTURE)  # plant a culture here - only works on an empty cell\n'+
-'# move(EAST)     # step one cell east; at the end of a row it wraps back\n'+
+'seed(CULTURE)\n'+
 '\n'+
-'# Goal: keep the top row planted, and keep collecting from it.\n'+
-'# Order matters, and a cell has to be empty before you can seed it.\n'+
-'#\n'+
-'# Leave "repeat" ticked and your program starts again when it ends.\n'+
-'# Press Step to walk it one call at a time and watch the highlight,\n'+
-'# or Run to let it go. Then open the Lab and buy Iteration.\n'+
+'# Everything you can do right now:\n'+
+'#   harvest()      take whatever has finished growing here\n'+
+'#   seed(CULTURE)  plant one, in an empty cell\n'+
+'#   move(EAST)     one cell east, wrapping round the dish\n'+
 '\n'+
 '\n';
 
@@ -3246,10 +4858,24 @@ function load(){
     W.tick=s.tick||0; W.x=Math.min(s.x||0,W.size-1); W.y=Math.min(s.y||0,W.size-1);
     W.grid=s.grid.map(unpackCell);
     if(W.grid.length!==W.size*W.size) initGrid(W.size);
+    /* a save written before contamination existed has no neglect clock; start
+       its cells now rather than declaring the whole dish overdue */
+    if(!Array.isArray(s.grid[0])||s.grid[0].length<8) resetFoulClock();
     W.wasted=s.wasted||0;
     W.best=s.best||{};
+    W.stats=s.stats||{};
+    W.done=s.done||{};
+    W.stageBest=s.stageBest||{};
+    W.seeds=s.seeds||{}; W.rival=s.rival||{};
+    W.hist=Array.isArray(s.hist)?s.hist:[];
+    W.daily=s.daily||null;
+    W.intro=s.intro||{};
     W.slots=Array.isArray(s.slots)?s.slots:[];
     W.slot=s.slot||0;
+    if(Array.isArray(s.bots)&&s.bots.length){
+      setBotCount(s.bots.length);
+      s.bots.forEach(function(q,i){ W.bots[i].x=q[0]; W.bots[i].y=q[1]; W.bots[i].px=q[0]; W.bots[i].py=q[1]; });
+    }
     if(s.live!==undefined) els.live.checked=!!s.live;
     W.maze=!!s.maze;
     W.tx=s.tx===undefined?-1:s.tx; W.ty=s.ty===undefined?-1:s.ty;
@@ -3258,12 +4884,27 @@ function load(){
     els.code.value=s.code!==undefined?s.code:STARTER;
     if(s.spd!==undefined) els.spd.value=s.spd;
     if(s.rep!==undefined) els.rep.checked=!!s.rep;
+    /* Seeder attachment was a passive that refilled every harvested cell. A loop
+       written against that has no seed() of its own and would quietly farm an
+       empty dish now, so anyone holding the tech gets told once. */
+    if(W.owned.has('replant')&&!s.replantNoticed) needReplantNotice=true;
   } else {
     initGrid(5);
     applyOwned();
+    resetFoulClock();
     els.code.value=STARTER;
   }
   W.px=W.x; W.py=W.y;
+}
+let needReplantNotice=false;
+function replantNotice(){
+  if(!needReplantNotice) return;
+  needReplantNotice=false;
+  logLine('Seeder attachment has changed. It used to replant every harvested cell by itself, which '+
+    'froze a bed to one crop and broke any seed() on the next line. It is a call now: replant() '+
+    'harvests and re-seeds the same species for one action, only where you ask for it. A loop that '+
+    'relied on the old behaviour needs a seed() or a replant() adding.','good');
+  save();
 }
 
 /* ============================================================
@@ -3294,8 +4935,8 @@ els.bReset.addEventListener('click',()=>{
   W.tick=0; W.x=0; W.y=0; W.lastAct='—';
   W.maze=false; W.saved=null; W.tx=-1; W.ty=-1;
   W.wasted=0; W.lastOk=true; W.flash=null; W.best={}; W.trial=null;
-  W.slots=[]; W.slot=0; clearRates();
-  applyOwned(); initGrid(5); W.px=0; W.py=0;
+  W.slots=[]; W.slot=0; W.stats={}; W.done={}; W.stageBest={}; W.seeds={}; W.rival={}; W.hist=[]; W.daily=null; W.intro={}; W.stage=null; clearRates();
+  applyOwned(); initGrid(5); resetFoulClock(); W.px=0; W.py=0;
   els.code.value=STARTER;
   els.console.innerHTML=''; logCount=0; RT.out=0;
   ensureSlots(); renderSlots();
@@ -3320,6 +4961,17 @@ document.querySelectorAll('#tabs button').forEach(b=>{
     fitCanvas();
   });
 });
+function showPane(name){
+  document.querySelectorAll('.subtabs button').forEach(function(x){
+    x.setAttribute('aria-selected',String(x.dataset.s===name));
+  });
+  els.labpane.hidden = name!=='lab';
+  els.trialpane.hidden = name!=='trials';
+  els.profpane.hidden = name!=='prof';
+  els.apipane.hidden = name!=='api';
+  if(name==='trials') renderTrials();
+  if(name==='prof') renderProf();
+}
 document.querySelectorAll('.subtabs button').forEach(b=>{
   b.addEventListener('click',()=>{
     document.querySelectorAll('.subtabs button').forEach(x=>x.setAttribute('aria-selected',String(x===b)));
@@ -3342,6 +4994,7 @@ function start(){
   updateSpeedLabel(); renderStatus(); fitCanvas();
   logLine('Nanobot online. '+W.size+' × '+W.size+' dish, agar substrate.','sys');
   logLine('Waiting for a program. Read the editor and write one.','sys');
+  replantNotice();
   requestAnimationFrame(f=>{ last=f; frame(f); });
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start);

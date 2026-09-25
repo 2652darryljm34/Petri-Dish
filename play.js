@@ -182,6 +182,12 @@ function doApi(){
     console.log('           '+SPECIES_NOTE[k].replace(/<[^>]+>/g,''));
   }
   console.log('');
+  console.log('TWO BOTS (once the second actuator is bought)');
+  console.log('  Both bots run the SAME program as independent copies: separate');
+  console.log('  variables, separate position. bot_id() returns 0 or 1 so a bot can tell');
+  console.log('  which half of the work is its own. Both act in the same step, so the');
+  console.log('  throughput really doubles - if you divide the dish up properly.');
+  console.log('');
   console.log('REPEATING');
   console.log('  When your program reaches the end it starts again from the top, keeping the');
   console.log('  dish and the bot exactly where they were. A straight-line script is therefore');
@@ -229,6 +235,10 @@ function doRun(){
   catch(e){ console.log('cannot read '+file); return; }
 
   const before=Object.assign({},W.res);
+  /* the game's own log carries the "why did that fail" hints; surface them */
+  const notes=[];
+  const realLog=logLine;
+  logLine=function(txt,cls){ if(cls==='sys'||cls==='bad') notes.push(txt); };
   const tick0=W.tick, waste0=W.wasted;
   els.code.value=code;
   const out=[];
@@ -260,8 +270,9 @@ function doRun(){
       g=execBlock(ast,GLOBALS);
       continue;
     }
-    if(r.value===TICK) ticks++;
+    if(r.value===TICK){ W.tick++; ticks++; }
   }
+  logLine=realLog;
   save();
   console.log('=== RUN '+file+' ===');
   const used=W.tick-tick0, waste=W.wasted-waste0;
@@ -282,6 +293,10 @@ function doRun(){
   if(out.length){
     console.log('output ('+out.length+' lines'+(out.length>25?', first 25':'')+'):');
     out.slice(0,25).forEach(l=>console.log('  '+l));
+  }
+  if(notes.length){
+    console.log('notes:');
+    notes.slice(0,10).forEach(l=>console.log('  * '+l));
   }
 }
 
